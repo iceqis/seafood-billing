@@ -1,6 +1,26 @@
 // Cloudflare Workers 后端代码
 // 作用：代理前端请求，调用飞书多维表格 API，完整适配海鲜批发记账系统 5 张表
 
+import {
+    FIELDS,
+    STATUS_TO_FEISHU,
+    customerFromFeishu,
+    orderFromFeishu,
+    productFromFeishu,
+    purchaseFromFeishu,
+    statusFromFeishu,
+    statusToFeishu,
+    supplierFromFeishu
+} from './field-mappers.js';
+import { corsHeaders, errorResponse, jsonResponse } from './response.js';
+import {
+    ValidationError,
+    validateDate,
+    validateOrderTransition,
+    validatePositiveNumber,
+    validateRequiredText
+} from './validation.js';
+
 // ==================== 环境变量配置说明 ====================
 // 在 Cloudflare Workers 控制台设置以下环境变量：
 // FEISHU_APP_ID      - 飞书应用的 App ID
@@ -13,57 +33,6 @@
 // TABLE_PURCHASES    - 进货表 table_id
 // ===========================================================
 
-// 飞书表格字段名（中文，与表格字段名严格一致）
-const FIELDS = {
-    customers: {
-        name: '客户名称',
-        phone: '联系电话',
-        settlement: '结算方式',
-        remark: '备注'
-    },
-    suppliers: {
-        name: '供应商名称',
-        phone: '联系电话',
-        remark: '备注'
-    },
-    products: {
-        name: '商品名称',
-        specs: '规格'
-    },
-    orders: {
-        id: '订单编号',
-        date: '日期',
-        customer: '客户',
-        product: '商品',
-        spec: '规格',
-        orderWeight: '报货重量',
-        actualWeight: '实际发货重量',
-        price: '单价',
-        amount: '金额',
-        status: '状态',
-        settled: '是否结算'
-    },
-    purchases: {
-        id: '进货单号',
-        date: '日期',
-        supplier: '供应商',
-        product: '商品',
-        spec: '规格',
-        weight: '进货重量',
-        price: '进货单价',
-        amount: '金额'
-    }
-};
-
-// 状态枚举值（中文，与飞书单选选项严格一致）
-const ORDER_STATUS = {
-    PENDING_SHIP: '待发货',
-    SHIPPED: '已发货',
-    PENDING_BILL: '未开单',
-    UNSETTLED: '未结算',
-    SETTLED: '已结算'
-};
-
 // 单号前缀
 const ID_PREFIX = {
     order: 'XSD',
@@ -71,31 +40,6 @@ const ID_PREFIX = {
 };
 
 // ==================== 工具函数 ====================
-
-// 统一 JSON 响应
-function jsonResponse(data, status = 200) {
-    return new Response(JSON.stringify(data), {
-        status,
-        headers: {
-            'Content-Type': 'application/json',
-            ...corsHeaders()
-        }
-    });
-}
-
-// 错误响应
-function errorResponse(message, status = 500) {
-    return jsonResponse({ code: status, message, data: null }, status);
-}
-
-// CORS 响应头
-function corsHeaders() {
-    return {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization'
-    };
-}
 
 // 获取今天日期 YYYY-MM-DD
 function getToday() {
@@ -233,99 +177,6 @@ function andFilter(conditions) {
     return { conjunction: 'and', conditions };
 }
 
-// ==================== 记录格式化 ====================
-
-function formatCustomer(item) {
-    const f = item.fields || {};
-    return {
-        recordId: item.record_id,
-        name: f[FIELDS.customers.name] || '',
-        phone: f[FIELDS.customers.phone] || '',
-        settlement: f[FIELDS.customers.settlement] || '',
-        remark: f[FIELDS.customers.remark] || ''
-    };
-}
-
-function formatSupplier(item) {
-    const f = item.fields || {};
-    return {
-        recordId: item.record_id,
-        name: f[FIELDS.suppliers.name] || '',
-        phone: f[FIELDS.suppliers.phone] || '',
-        remark: f[FIELDS.suppliers.remark] || ''
-    };
-}
-
-function formatProduct(item) {
-    const f = item.fields || {};
-    return {
-        recordId: item.record_id,
-        name: f[FIELDS.products.name] || '',
-        specs: f[FIELDS.products.specs] || ''
-    };
-}
-
-function formatOrder(item) {
-    const f = item.fields || {};
-    const actualWeight = parseFloat(f[FIELDS.orders.actualWeight]) || 0;
-    const price = parseFloat(f[FIELDS.orders.price]) || 0;
-    return {
-        recordId: item.record_id,
-        id: f[FIELDS.orders.id] || '',
-        date: f[FIELDS.orders.date] || '',
-        customer: f[FIELDS.orders.customer] || '',
-        product: f[FIELDS.orders.product] || '',
-        spec: f[FIELDS.orders.spec] || '',
-        orderWeight: parseFloat(f[FIELDS.orders.orderWeight]) || 0,
-        actualWeight,
-        price,
-        amount: parseFloat(f[FIELDS.orders.amount]) || (actualWeight * price) || 0,
-        status: f[FIELDS.orders.status] || '',
-        settled: f[FIELDS.orders.settled] || false
-    };
-}
-
-function formatPurchase(item) {
-    const f = item.fields || {};
-    const weight = parseFloat(f[FIELDS.purchases.weight]) || 0;
-    const price = parseFloat(f[FIELDS.purchases.price]) || 0;
-    return {
-        recordId: item.record_id,
-        id: f[FIELDS.purchases.id] || '',
-        date: f[FIELDS.purchases.date] || '',
-        supplier: f[FIELDS.purchases.supplier] || '',
-        product: f[FIELDS.purchases.product] || '',
-        spec: f[FIELDS.purchases.spec] || '',
-        weight,
-        price,
-        amount: parseFloat(f[FIELDS.purchases.amount]) || (weight * price) || 0
-    };
-}
-
-// 状态值转换：前端英文 -> 飞书中文
-function statusToFeishu(status) {
-    const map = {
-        'pending_ship': ORDER_STATUS.PENDING_SHIP,
-        'shipped': ORDER_STATUS.SHIPPED,
-        'pending_bill': ORDER_STATUS.PENDING_BILL,
-        'unsettled': ORDER_STATUS.UNSETTLED,
-        'settled': ORDER_STATUS.SETTLED
-    };
-    return map[status] || status;
-}
-
-// 状态值转换：飞书中文 -> 前端英文
-function statusFromFeishu(status) {
-    const map = {
-        [ORDER_STATUS.PENDING_SHIP]: 'pending_ship',
-        [ORDER_STATUS.SHIPPED]: 'shipped',
-        [ORDER_STATUS.PENDING_BILL]: 'pending_bill',
-        [ORDER_STATUS.UNSETTLED]: 'unsettled',
-        [ORDER_STATUS.SETTLED]: 'settled'
-    };
-    return map[status] || status;
-}
-
 // ==================== API 处理器 ====================
 
 // 客户相关
@@ -334,7 +185,7 @@ async function handleCustomers(request, env, token, url) {
 
     if (request.method === 'GET') {
         const items = await listRecords(env, token, tableId);
-        return jsonResponse({ code: 0, message: 'success', data: items.map(formatCustomer) });
+        return jsonResponse({ code: 0, message: 'success', data: items.map(customerFromFeishu) });
     }
 
     if (request.method === 'POST') {
@@ -347,7 +198,7 @@ async function handleCustomers(request, env, token, url) {
             [FIELDS.customers.remark]: body.remark || ''
         };
         const record = await createRecord(env, token, tableId, fields);
-        return jsonResponse({ code: 0, message: 'success', data: formatCustomer(record) });
+        return jsonResponse({ code: 0, message: 'success', data: customerFromFeishu(record) });
     }
 
     if (request.method === 'DELETE') {
@@ -365,7 +216,7 @@ async function handleSuppliers(request, env, token, url) {
 
     if (request.method === 'GET') {
         const items = await listRecords(env, token, tableId);
-        return jsonResponse({ code: 0, message: 'success', data: items.map(formatSupplier) });
+        return jsonResponse({ code: 0, message: 'success', data: items.map(supplierFromFeishu) });
     }
 
     if (request.method === 'POST') {
@@ -377,7 +228,7 @@ async function handleSuppliers(request, env, token, url) {
             [FIELDS.suppliers.remark]: body.remark || ''
         };
         const record = await createRecord(env, token, tableId, fields);
-        return jsonResponse({ code: 0, message: 'success', data: formatSupplier(record) });
+        return jsonResponse({ code: 0, message: 'success', data: supplierFromFeishu(record) });
     }
 
     if (request.method === 'DELETE') {
@@ -395,7 +246,7 @@ async function handleProducts(request, env, token, url) {
 
     if (request.method === 'GET') {
         const items = await listRecords(env, token, tableId);
-        return jsonResponse({ code: 0, message: 'success', data: items.map(formatProduct) });
+        return jsonResponse({ code: 0, message: 'success', data: items.map(productFromFeishu) });
     }
 
     if (request.method === 'POST') {
@@ -406,7 +257,7 @@ async function handleProducts(request, env, token, url) {
             [FIELDS.products.specs]: body.specs || ''
         };
         const record = await createRecord(env, token, tableId, fields);
-        return jsonResponse({ code: 0, message: 'success', data: formatProduct(record) });
+        return jsonResponse({ code: 0, message: 'success', data: productFromFeishu(record) });
     }
 
     if (request.method === 'DELETE') {
@@ -446,7 +297,7 @@ async function handleOrders(request, env, token, url) {
 
         const filter = andFilter(conditions);
         const items = await listRecords(env, token, tableId, filter);
-        const data = items.map(formatOrder).map(o => ({ ...o, status: statusFromFeishu(o.status) }));
+        const data = items.map(orderFromFeishu);
         return jsonResponse({ code: 0, message: 'success', data });
     }
 
@@ -457,22 +308,27 @@ async function handleOrders(request, env, token, url) {
             return errorResponse('客户、规格、报货重量不能为空', 400);
         }
 
+        const customer = validateRequiredText(body.customer, '客户');
+        const spec = validateRequiredText(body.spec, '规格');
+        const orderWeight = validatePositiveNumber(body.orderWeight, '报货重量');
+        const date = body.date ? validateDate(body.date) : getToday();
+
         const orderId = await generateId(ID_PREFIX.order, tableId, env, token);
         const fields = {
             [FIELDS.orders.id]: orderId,
-            [FIELDS.orders.date]: body.date || getToday(),
-            [FIELDS.orders.customer]: body.customer,
+            [FIELDS.orders.date]: date,
+            [FIELDS.orders.customer]: customer,
             [FIELDS.orders.product]: body.product || '基围虾',
-            [FIELDS.orders.spec]: body.spec,
-            [FIELDS.orders.orderWeight]: parseFloat(body.orderWeight),
+            [FIELDS.orders.spec]: spec,
+            [FIELDS.orders.orderWeight]: orderWeight,
             [FIELDS.orders.actualWeight]: '',
             [FIELDS.orders.price]: '',
             [FIELDS.orders.amount]: '',
-            [FIELDS.orders.status]: ORDER_STATUS.PENDING_SHIP,
+            [FIELDS.orders.status]: STATUS_TO_FEISHU.pending_ship,
             [FIELDS.orders.settled]: false
         };
         const record = await createRecord(env, token, tableId, fields);
-        return jsonResponse({ code: 0, message: 'success', data: formatOrder(record) });
+        return jsonResponse({ code: 0, message: 'success', data: orderFromFeishu(record) });
     }
 
     // DELETE /api/orders/:id
@@ -498,17 +354,21 @@ async function handleOrders(request, env, token, url) {
         if (items.length === 0) return errorResponse('订单不存在', 404);
 
         const record = items[0];
-        const current = formatOrder(record);
+        const current = orderFromFeishu(record);
         const updateFields = {};
+        const targetStatus = body.status === undefined ? undefined : statusFromFeishu(body.status);
 
         if (body.actualWeight !== undefined) {
-            updateFields[FIELDS.orders.actualWeight] = parseFloat(body.actualWeight) || 0;
+            updateFields[FIELDS.orders.actualWeight] = validatePositiveNumber(body.actualWeight, '实际发货重量');
         }
         if (body.price !== undefined) {
-            updateFields[FIELDS.orders.price] = parseFloat(body.price) || 0;
+            updateFields[FIELDS.orders.price] = validatePositiveNumber(body.price, '单价');
         }
-        if (body.status !== undefined) {
-            updateFields[FIELDS.orders.status] = statusToFeishu(body.status);
+        if (targetStatus !== undefined) {
+            if (targetStatus !== current.status) {
+                validateOrderTransition(current.status, targetStatus);
+            }
+            updateFields[FIELDS.orders.status] = statusToFeishu(targetStatus);
         }
 
         // 重新计算金额
@@ -524,12 +384,12 @@ async function handleOrders(request, env, token, url) {
         }
 
         // 如果是修改订单，状态重置为未开单
-        if (body.status === 'pending_bill' && statusFromFeishu(current.status) === 'settled') {
+        if (targetStatus === 'pending_bill' && current.status === 'settled') {
             updateFields[FIELDS.orders.settled] = false;
         }
 
         const updated = await updateRecord(env, token, tableId, record.record_id, updateFields);
-        return jsonResponse({ code: 0, message: 'success', data: formatOrder(updated) });
+        return jsonResponse({ code: 0, message: 'success', data: orderFromFeishu(updated) });
     }
 
     return errorResponse('Method Not Allowed', 405);
@@ -551,13 +411,13 @@ async function handleBillOrders(request, env, token) {
         const items = await listRecords(env, token, tableId, filter);
         if (items.length === 0) continue;
 
-        const order = formatOrder(items[0]);
-        if (statusFromFeishu(order.status) !== 'pending_bill') continue;
+        const order = orderFromFeishu(items[0]);
+        if (order.status !== 'pending_bill') continue;
 
         const updated = await updateRecord(env, token, tableId, items[0].record_id, {
-            [FIELDS.orders.status]: ORDER_STATUS.UNSETTLED
+            [FIELDS.orders.status]: STATUS_TO_FEISHU.unsettled
         });
-        const formatted = formatOrder(updated);
+        const formatted = orderFromFeishu(updated);
         totalAmount += formatted.amount;
         results.push(formatted);
     }
@@ -585,14 +445,14 @@ async function handleSettleOrders(request, env, token) {
         const items = await listRecords(env, token, tableId, filter);
         if (items.length === 0) continue;
 
-        const order = formatOrder(items[0]);
-        if (statusFromFeishu(order.status) !== 'unsettled') continue;
+        const order = orderFromFeishu(items[0]);
+        if (order.status !== 'unsettled') continue;
 
         const updated = await updateRecord(env, token, tableId, items[0].record_id, {
-            [FIELDS.orders.status]: ORDER_STATUS.SETTLED,
+            [FIELDS.orders.status]: STATUS_TO_FEISHU.settled,
             [FIELDS.orders.settled]: true
         });
-        const formatted = formatOrder(updated);
+        const formatted = orderFromFeishu(updated);
         totalAmount += formatted.amount;
         results.push(formatted);
     }
@@ -616,7 +476,7 @@ async function handlePurchases(request, env, token, url) {
         }
         const filter = andFilter(conditions);
         const items = await listRecords(env, token, tableId, filter);
-        return jsonResponse({ code: 0, message: 'success', data: items.map(formatPurchase) });
+        return jsonResponse({ code: 0, message: 'success', data: items.map(purchaseFromFeishu) });
     }
 
     if (request.method === 'POST') {
@@ -625,21 +485,24 @@ async function handlePurchases(request, env, token, url) {
             return errorResponse('供应商、规格、进货重量、进货单价不能为空', 400);
         }
 
+        const supplier = validateRequiredText(body.supplier, '供应商');
+        const spec = validateRequiredText(body.spec, '规格');
+        const date = body.date ? validateDate(body.date) : getToday();
+        const weight = validatePositiveNumber(body.weight, '进货重量');
+        const price = validatePositiveNumber(body.price, '进货单价');
         const purchaseId = await generateId(ID_PREFIX.purchase, tableId, env, token);
-        const weight = parseFloat(body.weight);
-        const price = parseFloat(body.price);
         const fields = {
             [FIELDS.purchases.id]: purchaseId,
-            [FIELDS.purchases.date]: body.date || getToday(),
-            [FIELDS.purchases.supplier]: body.supplier,
+            [FIELDS.purchases.date]: date,
+            [FIELDS.purchases.supplier]: supplier,
             [FIELDS.purchases.product]: body.product || '基围虾',
-            [FIELDS.purchases.spec]: body.spec,
+            [FIELDS.purchases.spec]: spec,
             [FIELDS.purchases.weight]: weight,
             [FIELDS.purchases.price]: price,
             [FIELDS.purchases.amount]: parseFloat((weight * price).toFixed(2))
         };
         const record = await createRecord(env, token, tableId, fields);
-        return jsonResponse({ code: 0, message: 'success', data: formatPurchase(record) });
+        return jsonResponse({ code: 0, message: 'success', data: purchaseFromFeishu(record) });
     }
 
     if (request.method === 'DELETE') {
@@ -664,24 +527,32 @@ async function handleStats(request, env, token, url) {
     // 今日销售：状态为未结算或已结算
     const todaySalesConditions = [
         singleCondition(FIELDS.orders.date, 'is', date),
-        { field_name: FIELDS.orders.status, operator: 'isAnyOf', value: [ORDER_STATUS.UNSETTLED, ORDER_STATUS.SETTLED] }
+        {
+            field_name: FIELDS.orders.status,
+            operator: 'isAnyOf',
+            value: [STATUS_TO_FEISHU.unsettled, STATUS_TO_FEISHU.settled]
+        }
     ];
     const todaySalesItems = await listRecords(env, token, ordersTable, andFilter(todaySalesConditions));
-    const todaySales = todaySalesItems.reduce((sum, item) => sum + formatOrder(item).amount, 0);
+    const todaySales = todaySalesItems.reduce((sum, item) => sum + orderFromFeishu(item).amount, 0);
     const todayDealCount = todaySalesItems.length;
 
     // 今日进货
     const todayPurchaseItems = await listRecords(env, token, purchasesTable, singleCondition(FIELDS.purchases.date, 'is', date));
-    const todayPurchase = todayPurchaseItems.reduce((sum, item) => sum + formatPurchase(item).amount, 0);
+    const todayPurchase = todayPurchaseItems.reduce((sum, item) => sum + purchaseFromFeishu(item).amount, 0);
 
     // 本月销售
     const monthSalesConditions = [
         singleCondition(FIELDS.orders.date, 'isGreaterThanOrEqualTo', month + '-01'),
         singleCondition(FIELDS.orders.date, 'isLessThanOrEqualTo', month + '-31'),
-        { field_name: FIELDS.orders.status, operator: 'isAnyOf', value: [ORDER_STATUS.UNSETTLED, ORDER_STATUS.SETTLED] }
+        {
+            field_name: FIELDS.orders.status,
+            operator: 'isAnyOf',
+            value: [STATUS_TO_FEISHU.unsettled, STATUS_TO_FEISHU.settled]
+        }
     ];
     const monthSalesItems = await listRecords(env, token, ordersTable, andFilter(monthSalesConditions));
-    const monthSales = monthSalesItems.reduce((sum, item) => sum + formatOrder(item).amount, 0);
+    const monthSales = monthSalesItems.reduce((sum, item) => sum + orderFromFeishu(item).amount, 0);
 
     return jsonResponse({
         code: 0,
@@ -710,26 +581,34 @@ async function handleDetails(request, env, token, url) {
         case 'today-sales': {
             const filter = andFilter([
                 singleCondition(FIELDS.orders.date, 'is', date),
-                { field_name: FIELDS.orders.status, operator: 'isAnyOf', value: [ORDER_STATUS.UNSETTLED, ORDER_STATUS.SETTLED] }
+                {
+                    field_name: FIELDS.orders.status,
+                    operator: 'isAnyOf',
+                    value: [STATUS_TO_FEISHU.unsettled, STATUS_TO_FEISHU.settled]
+                }
             ]);
             const items = await listRecords(env, token, ordersTable, filter);
-            data = items.map(formatOrder).map(o => ({ ...o, status: statusFromFeishu(o.status) }));
+            data = items.map(orderFromFeishu);
             total = data.reduce((sum, o) => sum + o.amount, 0);
             break;
         }
         case 'today-deals': {
             const filter = andFilter([
                 singleCondition(FIELDS.orders.date, 'is', date),
-                { field_name: FIELDS.orders.status, operator: 'isAnyOf', value: [ORDER_STATUS.UNSETTLED, ORDER_STATUS.SETTLED] }
+                {
+                    field_name: FIELDS.orders.status,
+                    operator: 'isAnyOf',
+                    value: [STATUS_TO_FEISHU.unsettled, STATUS_TO_FEISHU.settled]
+                }
             ]);
             const items = await listRecords(env, token, ordersTable, filter);
-            data = items.map(formatOrder).map(o => ({ ...o, status: statusFromFeishu(o.status) }));
+            data = items.map(orderFromFeishu);
             total = data.length;
             break;
         }
         case 'today-purchase': {
             const items = await listRecords(env, token, purchasesTable, singleCondition(FIELDS.purchases.date, 'is', date));
-            data = items.map(formatPurchase);
+            data = items.map(purchaseFromFeishu);
             total = data.reduce((sum, p) => sum + p.amount, 0);
             break;
         }
@@ -737,10 +616,14 @@ async function handleDetails(request, env, token, url) {
             const filter = andFilter([
                 singleCondition(FIELDS.orders.date, 'isGreaterThanOrEqualTo', month + '-01'),
                 singleCondition(FIELDS.orders.date, 'isLessThanOrEqualTo', month + '-31'),
-                { field_name: FIELDS.orders.status, operator: 'isAnyOf', value: [ORDER_STATUS.UNSETTLED, ORDER_STATUS.SETTLED] }
+                {
+                    field_name: FIELDS.orders.status,
+                    operator: 'isAnyOf',
+                    value: [STATUS_TO_FEISHU.unsettled, STATUS_TO_FEISHU.settled]
+                }
             ]);
             const items = await listRecords(env, token, ordersTable, filter);
-            data = items.map(formatOrder).map(o => ({ ...o, status: statusFromFeishu(o.status) }));
+            data = items.map(orderFromFeishu);
             total = data.reduce((sum, o) => sum + o.amount, 0);
             break;
         }
@@ -757,17 +640,11 @@ async function handleDetails(request, env, token, url) {
 
 // ==================== 主入口 ====================
 
-export default {
-    async fetch(request, env, ctx) {
-        // 处理 CORS 预检请求
-        if (request.method === 'OPTIONS') {
-            return new Response(null, { headers: corsHeaders() });
-        }
+async function routeRequest(request, env) {
+    const url = new URL(request.url);
+    const path = url.pathname;
 
-        const url = new URL(request.url);
-        const path = url.pathname;
-
-        try {
+    try {
             // 健康检查不依赖飞书配置或令牌
             if (path === '/api/health') {
                 return jsonResponse({
@@ -833,10 +710,43 @@ export default {
                 return await handleDetails(request, env, token, url);
             }
 
-            return errorResponse('Not Found', 404);
-        } catch (err) {
-            return errorResponse(err.message, 500);
+        return errorResponse('Not Found', 404);
+    } catch (err) {
+        const status = err instanceof ValidationError ? err.status : 500;
+        return errorResponse(err.message, status);
+    }
+}
+
+function parseAllowedOrigins(value) {
+    return String(value ?? '')
+        .split(',')
+        .map(origin => origin.trim())
+        .filter(Boolean);
+}
+
+function withCors(response, cors) {
+    const headers = new Headers(response.headers);
+    for (const [name, value] of Object.entries(cors)) {
+        headers.set(name, value);
+    }
+    return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers
+    });
+}
+
+export default {
+    async fetch(request, env, ctx) {
+        const origin = request.headers.get('Origin') ?? '';
+        const cors = corsHeaders(origin, parseAllowedOrigins(env.ALLOWED_ORIGINS));
+
+        if (request.method === 'OPTIONS') {
+            return new Response(null, { headers: cors });
         }
+
+        const response = await routeRequest(request, env);
+        return withCors(response, cors);
     }
 };
 
