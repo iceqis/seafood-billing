@@ -13,6 +13,7 @@ import {
     supplierFromFeishu
 } from './field-mappers.js';
 import { corsHeaders, errorResponse, jsonResponse } from './response.js';
+import { createFeishuClient } from './feishu-client.js';
 import {
     ValidationError,
     validateDate,
@@ -52,117 +53,26 @@ function getCurrentMonth() {
 }
 
 // 生成单号：前缀 + YYYYMMDD + 3位序号
-async function generateId(prefix, tableId, env, token) {
+async function generateId(prefix, tableId, feishu) {
     const date = getToday().replace(/-/g, '');
-    const count = await getRecordCount(tableId, env, token);
+    const count = await getRecordCount(tableId, feishu);
     const seq = String(count + 1).padStart(3, '0');
     return `${prefix}${date}${seq}`;
 }
 
-// ==================== 飞书 API 基础封装 ====================
-
-// 获取 tenant_access_token
-async function getTenantToken(env) {
-    const res = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            app_id: env.FEISHU_APP_ID,
-            app_secret: env.FEISHU_APP_SECRET
-        })
-    });
-    const data = await res.json();
-    if (data.code !== 0) {
-        throw new Error('获取飞书 token 失败: ' + JSON.stringify(data));
-    }
-    return data.tenant_access_token;
-}
-
-// 构造表格 API URL
-function getRecordsUrl(env, tableId) {
-    return `https://open.feishu.cn/open-apis/bitable/v1/apps/${env.FEISHU_BASE_TOKEN}/tables/${tableId}/records`;
-}
-
 // 获取记录总数（用于生成单号）
-async function getRecordCount(tableId, env, token) {
-    const res = await fetch(`${getRecordsUrl(env, tableId)}?page_size=1`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-    });
-    const data = await res.json();
-    return data.data?.total || 0;
-}
-
-// 列出记录
-async function listRecords(env, token, tableId, filter = null, pageSize = 500) {
-    let url = `${getRecordsUrl(env, tableId)}?page_size=${pageSize}`;
-    if (filter) {
-        url += `&filter=${encodeURIComponent(JSON.stringify(filter))}`;
-    }
-    const res = await fetch(url, {
-        headers: { 'Authorization': `Bearer ${token}` }
-    });
-    const data = await res.json();
-    if (data.code !== 0) {
-        throw new Error('查询飞书记录失败: ' + JSON.stringify(data));
-    }
-    return data.data?.items || [];
-}
-
-// 创建记录
-async function createRecord(env, token, tableId, fields) {
-    const res = await fetch(getRecordsUrl(env, tableId), {
-        method: 'POST',
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ fields })
-    });
-    const data = await res.json();
-    if (data.code !== 0) {
-        throw new Error('创建飞书记录失败: ' + JSON.stringify(data));
-    }
-    return data.data?.record;
-}
-
-// 更新记录
-async function updateRecord(env, token, tableId, recordId, fields) {
-    const res = await fetch(`${getRecordsUrl(env, tableId)}/${recordId}`, {
-        method: 'PUT',
-        headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ fields })
-    });
-    const data = await res.json();
-    if (data.code !== 0) {
-        throw new Error('更新飞书记录失败: ' + JSON.stringify(data));
-    }
-    return data.data?.record;
-}
-
-// 删除记录
-async function deleteRecord(env, token, tableId, recordId) {
-    const res = await fetch(`${getRecordsUrl(env, tableId)}/${recordId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-    });
-    const data = await res.json();
-    if (data.code !== 0) {
-        throw new Error('删除飞书记录失败: ' + JSON.stringify(data));
-    }
-    return data.data;
+async function getRecordCount(tableId, feishu) {
+    return (await feishu.listAllRecords(tableId)).length;
 }
 
 // 根据名称删除记录（用于客户/供应商/商品删除）
-async function deleteRecordByName(env, token, tableId, fieldName, name) {
+async function deleteRecordByName(feishu, tableId, fieldName, name) {
     const filter = { field_name: fieldName, operator: 'is', value: [name] };
-    const items = await listRecords(env, token, tableId, filter);
+    const items = await feishu.listAllRecords(tableId, filter);
     if (items.length === 0) {
         throw new Error('记录不存在');
     }
-    await deleteRecord(env, token, tableId, items[0].record_id);
+    await feishu.deleteRecord(tableId, items[0].record_id);
 }
 
 // 构造单一条件筛选
@@ -180,11 +90,11 @@ function andFilter(conditions) {
 // ==================== API 处理器 ====================
 
 // 客户相关
-async function handleCustomers(request, env, token, url) {
+async function handleCustomers(request, env, feishu, url) {
     const tableId = env.TABLE_CUSTOMERS;
 
     if (request.method === 'GET') {
-        const items = await listRecords(env, token, tableId);
+        const items = await feishu.listAllRecords(tableId);
         return jsonResponse({ code: 0, message: 'success', data: items.map(customerFromFeishu) });
     }
 
@@ -197,13 +107,13 @@ async function handleCustomers(request, env, token, url) {
             [FIELDS.customers.settlement]: body.settlement || '',
             [FIELDS.customers.remark]: body.remark || ''
         };
-        const record = await createRecord(env, token, tableId, fields);
+        const record = await feishu.createRecord(tableId, fields);
         return jsonResponse({ code: 0, message: 'success', data: customerFromFeishu(record) });
     }
 
     if (request.method === 'DELETE') {
         const name = decodeURIComponent(url.pathname.split('/').pop());
-        await deleteRecordByName(env, token, tableId, FIELDS.customers.name, name);
+        await deleteRecordByName(feishu, tableId, FIELDS.customers.name, name);
         return jsonResponse({ code: 0, message: 'success', data: null });
     }
 
@@ -211,11 +121,11 @@ async function handleCustomers(request, env, token, url) {
 }
 
 // 供应商相关
-async function handleSuppliers(request, env, token, url) {
+async function handleSuppliers(request, env, feishu, url) {
     const tableId = env.TABLE_SUPPLIERS;
 
     if (request.method === 'GET') {
-        const items = await listRecords(env, token, tableId);
+        const items = await feishu.listAllRecords(tableId);
         return jsonResponse({ code: 0, message: 'success', data: items.map(supplierFromFeishu) });
     }
 
@@ -227,13 +137,13 @@ async function handleSuppliers(request, env, token, url) {
             [FIELDS.suppliers.phone]: body.phone || '',
             [FIELDS.suppliers.remark]: body.remark || ''
         };
-        const record = await createRecord(env, token, tableId, fields);
+        const record = await feishu.createRecord(tableId, fields);
         return jsonResponse({ code: 0, message: 'success', data: supplierFromFeishu(record) });
     }
 
     if (request.method === 'DELETE') {
         const name = decodeURIComponent(url.pathname.split('/').pop());
-        await deleteRecordByName(env, token, tableId, FIELDS.suppliers.name, name);
+        await deleteRecordByName(feishu, tableId, FIELDS.suppliers.name, name);
         return jsonResponse({ code: 0, message: 'success', data: null });
     }
 
@@ -241,11 +151,11 @@ async function handleSuppliers(request, env, token, url) {
 }
 
 // 商品相关
-async function handleProducts(request, env, token, url) {
+async function handleProducts(request, env, feishu, url) {
     const tableId = env.TABLE_PRODUCTS;
 
     if (request.method === 'GET') {
-        const items = await listRecords(env, token, tableId);
+        const items = await feishu.listAllRecords(tableId);
         return jsonResponse({ code: 0, message: 'success', data: items.map(productFromFeishu) });
     }
 
@@ -256,13 +166,13 @@ async function handleProducts(request, env, token, url) {
             [FIELDS.products.name]: body.name,
             [FIELDS.products.specs]: body.specs || ''
         };
-        const record = await createRecord(env, token, tableId, fields);
+        const record = await feishu.createRecord(tableId, fields);
         return jsonResponse({ code: 0, message: 'success', data: productFromFeishu(record) });
     }
 
     if (request.method === 'DELETE') {
         const name = decodeURIComponent(url.pathname.split('/').pop());
-        await deleteRecordByName(env, token, tableId, FIELDS.products.name, name);
+        await deleteRecordByName(feishu, tableId, FIELDS.products.name, name);
         return jsonResponse({ code: 0, message: 'success', data: null });
     }
 
@@ -270,7 +180,7 @@ async function handleProducts(request, env, token, url) {
 }
 
 // 订单相关
-async function handleOrders(request, env, token, url) {
+async function handleOrders(request, env, feishu, url) {
     const tableId = env.TABLE_ORDERS;
 
     // GET /api/orders
@@ -296,7 +206,7 @@ async function handleOrders(request, env, token, url) {
         }
 
         const filter = andFilter(conditions);
-        const items = await listRecords(env, token, tableId, filter);
+        const items = await feishu.listAllRecords(tableId, filter);
         const data = items.map(orderFromFeishu);
         return jsonResponse({ code: 0, message: 'success', data });
     }
@@ -313,7 +223,7 @@ async function handleOrders(request, env, token, url) {
         const orderWeight = validatePositiveNumber(body.orderWeight, '报货重量');
         const date = body.date ? validateDate(body.date) : getToday();
 
-        const orderId = await generateId(ID_PREFIX.order, tableId, env, token);
+        const orderId = await generateId(ID_PREFIX.order, tableId, feishu);
         const fields = {
             [FIELDS.orders.id]: orderId,
             [FIELDS.orders.date]: date,
@@ -327,7 +237,7 @@ async function handleOrders(request, env, token, url) {
             [FIELDS.orders.status]: STATUS_TO_FEISHU.pending_ship,
             [FIELDS.orders.settled]: false
         };
-        const record = await createRecord(env, token, tableId, fields);
+        const record = await feishu.createRecord(tableId, fields);
         return jsonResponse({ code: 0, message: 'success', data: orderFromFeishu(record) });
     }
 
@@ -337,9 +247,9 @@ async function handleOrders(request, env, token, url) {
         const id = deleteMatch[1];
         // 先查询 recordId
         const filter = singleCondition(FIELDS.orders.id, 'is', id);
-        const items = await listRecords(env, token, tableId, filter);
+        const items = await feishu.listAllRecords(tableId, filter);
         if (items.length === 0) return errorResponse('订单不存在', 404);
-        await deleteRecord(env, token, tableId, items[0].record_id);
+        await feishu.deleteRecord(tableId, items[0].record_id);
         return jsonResponse({ code: 0, message: 'success', data: null });
     }
 
@@ -350,7 +260,7 @@ async function handleOrders(request, env, token, url) {
         const body = await request.json();
 
         const filter = singleCondition(FIELDS.orders.id, 'is', id);
-        const items = await listRecords(env, token, tableId, filter);
+        const items = await feishu.listAllRecords(tableId, filter);
         if (items.length === 0) return errorResponse('订单不存在', 404);
 
         const record = items[0];
@@ -388,7 +298,7 @@ async function handleOrders(request, env, token, url) {
             updateFields[FIELDS.orders.settled] = false;
         }
 
-        const updated = await updateRecord(env, token, tableId, record.record_id, updateFields);
+        const updated = await feishu.updateRecord(tableId, record.record_id, updateFields);
         return jsonResponse({ code: 0, message: 'success', data: orderFromFeishu(updated) });
     }
 
@@ -396,7 +306,7 @@ async function handleOrders(request, env, token, url) {
 }
 
 // 统一开单
-async function handleBillOrders(request, env, token) {
+async function handleBillOrders(request, env, feishu) {
     const body = await request.json();
     if (!body.ids || !Array.isArray(body.ids) || body.ids.length === 0) {
         return errorResponse('订单ID列表不能为空', 400);
@@ -408,13 +318,13 @@ async function handleBillOrders(request, env, token) {
 
     for (const id of body.ids) {
         const filter = singleCondition(FIELDS.orders.id, 'is', id);
-        const items = await listRecords(env, token, tableId, filter);
+        const items = await feishu.listAllRecords(tableId, filter);
         if (items.length === 0) continue;
 
         const order = orderFromFeishu(items[0]);
         if (order.status !== 'pending_bill') continue;
 
-        const updated = await updateRecord(env, token, tableId, items[0].record_id, {
+        const updated = await feishu.updateRecord(tableId, items[0].record_id, {
             [FIELDS.orders.status]: STATUS_TO_FEISHU.unsettled
         });
         const formatted = orderFromFeishu(updated);
@@ -430,7 +340,7 @@ async function handleBillOrders(request, env, token) {
 }
 
 // 结算订单
-async function handleSettleOrders(request, env, token) {
+async function handleSettleOrders(request, env, feishu) {
     const body = await request.json();
     if (!body.ids || !Array.isArray(body.ids) || body.ids.length === 0) {
         return errorResponse('订单ID列表不能为空', 400);
@@ -442,13 +352,13 @@ async function handleSettleOrders(request, env, token) {
 
     for (const id of body.ids) {
         const filter = singleCondition(FIELDS.orders.id, 'is', id);
-        const items = await listRecords(env, token, tableId, filter);
+        const items = await feishu.listAllRecords(tableId, filter);
         if (items.length === 0) continue;
 
         const order = orderFromFeishu(items[0]);
         if (order.status !== 'unsettled') continue;
 
-        const updated = await updateRecord(env, token, tableId, items[0].record_id, {
+        const updated = await feishu.updateRecord(tableId, items[0].record_id, {
             [FIELDS.orders.status]: STATUS_TO_FEISHU.settled,
             [FIELDS.orders.settled]: true
         });
@@ -465,7 +375,7 @@ async function handleSettleOrders(request, env, token) {
 }
 
 // 进货相关
-async function handlePurchases(request, env, token, url) {
+async function handlePurchases(request, env, feishu, url) {
     const tableId = env.TABLE_PURCHASES;
 
     if (request.method === 'GET') {
@@ -475,7 +385,7 @@ async function handlePurchases(request, env, token, url) {
             conditions.push(singleCondition(FIELDS.purchases.date, 'is', date));
         }
         const filter = andFilter(conditions);
-        const items = await listRecords(env, token, tableId, filter);
+        const items = await feishu.listAllRecords(tableId, filter);
         return jsonResponse({ code: 0, message: 'success', data: items.map(purchaseFromFeishu) });
     }
 
@@ -490,7 +400,7 @@ async function handlePurchases(request, env, token, url) {
         const date = body.date ? validateDate(body.date) : getToday();
         const weight = validatePositiveNumber(body.weight, '进货重量');
         const price = validatePositiveNumber(body.price, '进货单价');
-        const purchaseId = await generateId(ID_PREFIX.purchase, tableId, env, token);
+        const purchaseId = await generateId(ID_PREFIX.purchase, tableId, feishu);
         const fields = {
             [FIELDS.purchases.id]: purchaseId,
             [FIELDS.purchases.date]: date,
@@ -501,16 +411,16 @@ async function handlePurchases(request, env, token, url) {
             [FIELDS.purchases.price]: price,
             [FIELDS.purchases.amount]: parseFloat((weight * price).toFixed(2))
         };
-        const record = await createRecord(env, token, tableId, fields);
+        const record = await feishu.createRecord(tableId, fields);
         return jsonResponse({ code: 0, message: 'success', data: purchaseFromFeishu(record) });
     }
 
     if (request.method === 'DELETE') {
         const id = url.pathname.split('/').pop();
         const filter = singleCondition(FIELDS.purchases.id, 'is', id);
-        const items = await listRecords(env, token, tableId, filter);
+        const items = await feishu.listAllRecords(tableId, filter);
         if (items.length === 0) return errorResponse('进货记录不存在', 404);
-        await deleteRecord(env, token, tableId, items[0].record_id);
+        await feishu.deleteRecord(tableId, items[0].record_id);
         return jsonResponse({ code: 0, message: 'success', data: null });
     }
 
@@ -518,7 +428,7 @@ async function handlePurchases(request, env, token, url) {
 }
 
 // 统计相关
-async function handleStats(request, env, token, url) {
+async function handleStats(request, env, feishu, url) {
     const date = url.searchParams.get('date') || getToday();
     const month = date.substring(0, 7);
     const ordersTable = env.TABLE_ORDERS;
@@ -533,12 +443,12 @@ async function handleStats(request, env, token, url) {
             value: [STATUS_TO_FEISHU.unsettled, STATUS_TO_FEISHU.settled]
         }
     ];
-    const todaySalesItems = await listRecords(env, token, ordersTable, andFilter(todaySalesConditions));
+    const todaySalesItems = await feishu.listAllRecords(ordersTable, andFilter(todaySalesConditions));
     const todaySales = todaySalesItems.reduce((sum, item) => sum + orderFromFeishu(item).amount, 0);
     const todayDealCount = todaySalesItems.length;
 
     // 今日进货
-    const todayPurchaseItems = await listRecords(env, token, purchasesTable, singleCondition(FIELDS.purchases.date, 'is', date));
+    const todayPurchaseItems = await feishu.listAllRecords(purchasesTable, singleCondition(FIELDS.purchases.date, 'is', date));
     const todayPurchase = todayPurchaseItems.reduce((sum, item) => sum + purchaseFromFeishu(item).amount, 0);
 
     // 本月销售
@@ -551,7 +461,7 @@ async function handleStats(request, env, token, url) {
             value: [STATUS_TO_FEISHU.unsettled, STATUS_TO_FEISHU.settled]
         }
     ];
-    const monthSalesItems = await listRecords(env, token, ordersTable, andFilter(monthSalesConditions));
+    const monthSalesItems = await feishu.listAllRecords(ordersTable, andFilter(monthSalesConditions));
     const monthSales = monthSalesItems.reduce((sum, item) => sum + orderFromFeishu(item).amount, 0);
 
     return jsonResponse({
@@ -567,7 +477,7 @@ async function handleStats(request, env, token, url) {
 }
 
 // 明细相关
-async function handleDetails(request, env, token, url) {
+async function handleDetails(request, env, feishu, url) {
     const type = url.pathname.split('/').pop();
     const date = url.searchParams.get('date') || getToday();
     const month = date.substring(0, 7);
@@ -587,7 +497,7 @@ async function handleDetails(request, env, token, url) {
                     value: [STATUS_TO_FEISHU.unsettled, STATUS_TO_FEISHU.settled]
                 }
             ]);
-            const items = await listRecords(env, token, ordersTable, filter);
+            const items = await feishu.listAllRecords(ordersTable, filter);
             data = items.map(orderFromFeishu);
             total = data.reduce((sum, o) => sum + o.amount, 0);
             break;
@@ -601,13 +511,13 @@ async function handleDetails(request, env, token, url) {
                     value: [STATUS_TO_FEISHU.unsettled, STATUS_TO_FEISHU.settled]
                 }
             ]);
-            const items = await listRecords(env, token, ordersTable, filter);
+            const items = await feishu.listAllRecords(ordersTable, filter);
             data = items.map(orderFromFeishu);
             total = data.length;
             break;
         }
         case 'today-purchase': {
-            const items = await listRecords(env, token, purchasesTable, singleCondition(FIELDS.purchases.date, 'is', date));
+            const items = await feishu.listAllRecords(purchasesTable, singleCondition(FIELDS.purchases.date, 'is', date));
             data = items.map(purchaseFromFeishu);
             total = data.reduce((sum, p) => sum + p.amount, 0);
             break;
@@ -622,7 +532,7 @@ async function handleDetails(request, env, token, url) {
                     value: [STATUS_TO_FEISHU.unsettled, STATUS_TO_FEISHU.settled]
                 }
             ]);
-            const items = await listRecords(env, token, ordersTable, filter);
+            const items = await feishu.listAllRecords(ordersTable, filter);
             data = items.map(orderFromFeishu);
             total = data.reduce((sum, o) => sum + o.amount, 0);
             break;
@@ -671,43 +581,43 @@ async function routeRequest(request, env) {
                 }
             }
 
-            const token = await getTenantToken(env);
+            const feishu = createFeishuClient(env);
 
             // 路由分发
             if (path === '/api/customers' || path.startsWith('/api/customers/')) {
-                return await handleCustomers(request, env, token, url);
+                return await handleCustomers(request, env, feishu, url);
             }
 
             if (path === '/api/suppliers' || path.startsWith('/api/suppliers/')) {
-                return await handleSuppliers(request, env, token, url);
+                return await handleSuppliers(request, env, feishu, url);
             }
 
             if (path === '/api/products' || path.startsWith('/api/products/')) {
-                return await handleProducts(request, env, token, url);
+                return await handleProducts(request, env, feishu, url);
             }
 
             if (path === '/api/orders/bill') {
-                return await handleBillOrders(request, env, token);
+                return await handleBillOrders(request, env, feishu);
             }
 
             if (path === '/api/orders/settle') {
-                return await handleSettleOrders(request, env, token);
+                return await handleSettleOrders(request, env, feishu);
             }
 
             if (path === '/api/orders' || /^\/api\/orders\/[^/]+$/.test(path)) {
-                return await handleOrders(request, env, token, url);
+                return await handleOrders(request, env, feishu, url);
             }
 
             if (path === '/api/purchases' || path.startsWith('/api/purchases/')) {
-                return await handlePurchases(request, env, token, url);
+                return await handlePurchases(request, env, feishu, url);
             }
 
             if (path === '/api/stats/home') {
-                return await handleStats(request, env, token, url);
+                return await handleStats(request, env, feishu, url);
             }
 
             if (path.startsWith('/api/details/')) {
-                return await handleDetails(request, env, token, url);
+                return await handleDetails(request, env, feishu, url);
             }
 
         return errorResponse('Not Found', 404);

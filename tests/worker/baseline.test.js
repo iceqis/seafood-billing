@@ -268,7 +268,7 @@ describe('worker production baseline', () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ code: 400, message });
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -288,7 +288,7 @@ describe('worker production baseline', () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toMatchObject({ code: 400, message });
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it.each([
