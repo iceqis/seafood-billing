@@ -446,7 +446,8 @@ async function handleOrders(request, env, token, url) {
 
         const filter = andFilter(conditions);
         const items = await listRecords(env, token, tableId, filter);
-        return jsonResponse({ code: 0, message: 'success', data: items.map(formatOrder) });
+        const data = items.map(formatOrder).map(o => ({ ...o, status: statusFromFeishu(o.status) }));
+        return jsonResponse({ code: 0, message: 'success', data });
     }
 
     // POST /api/orders - 创建预订单
@@ -523,7 +524,7 @@ async function handleOrders(request, env, token, url) {
         }
 
         // 如果是修改订单，状态重置为未开单
-        if (body.status === 'pending_bill' && current.status === ORDER_STATUS.SETTLED) {
+        if (body.status === 'pending_bill' && statusFromFeishu(current.status) === 'settled') {
             updateFields[FIELDS.orders.settled] = false;
         }
 
@@ -551,7 +552,7 @@ async function handleBillOrders(request, env, token) {
         if (items.length === 0) continue;
 
         const order = formatOrder(items[0]);
-        if (order.status !== ORDER_STATUS.PENDING_BILL) continue;
+        if (statusFromFeishu(order.status) !== 'pending_bill') continue;
 
         const updated = await updateRecord(env, token, tableId, items[0].record_id, {
             [FIELDS.orders.status]: ORDER_STATUS.UNSETTLED
@@ -585,7 +586,7 @@ async function handleSettleOrders(request, env, token) {
         if (items.length === 0) continue;
 
         const order = formatOrder(items[0]);
-        if (order.status !== ORDER_STATUS.UNSETTLED) continue;
+        if (statusFromFeishu(order.status) !== 'unsettled') continue;
 
         const updated = await updateRecord(env, token, tableId, items[0].record_id, {
             [FIELDS.orders.status]: ORDER_STATUS.SETTLED,
@@ -767,6 +768,23 @@ export default {
         const path = url.pathname;
 
         try {
+            // 健康检查不依赖飞书配置或令牌
+            if (path === '/api/health') {
+                return jsonResponse({
+                    code: 0,
+                    message: 'ok',
+                    data: { version: '3.0.1', service: 'seafood-billing-api' }
+                });
+            }
+
+            if (path === '/api/orders/bill' && request.method !== 'POST') {
+                return errorResponse('Method Not Allowed', 405);
+            }
+
+            if (path === '/api/orders/settle' && request.method !== 'POST') {
+                return errorResponse('Method Not Allowed', 405);
+            }
+
             // 环境变量校验
             const requiredEnv = ['FEISHU_APP_ID', 'FEISHU_APP_SECRET', 'FEISHU_BASE_TOKEN',
                 'TABLE_CUSTOMERS', 'TABLE_SUPPLIERS', 'TABLE_PRODUCTS', 'TABLE_ORDERS', 'TABLE_PURCHASES'];
@@ -791,16 +809,16 @@ export default {
                 return await handleProducts(request, env, token, url);
             }
 
-            if (path === '/api/orders' || path.startsWith('/api/orders/')) {
-                return await handleOrders(request, env, token, url);
-            }
-
             if (path === '/api/orders/bill') {
                 return await handleBillOrders(request, env, token);
             }
 
             if (path === '/api/orders/settle') {
                 return await handleSettleOrders(request, env, token);
+            }
+
+            if (path === '/api/orders' || /^\/api\/orders\/[^/]+$/.test(path)) {
+                return await handleOrders(request, env, token, url);
             }
 
             if (path === '/api/purchases' || path.startsWith('/api/purchases/')) {
@@ -813,11 +831,6 @@ export default {
 
             if (path.startsWith('/api/details/')) {
                 return await handleDetails(request, env, token, url);
-            }
-
-            // 健康检查
-            if (path === '/api/health') {
-                return jsonResponse({ code: 0, message: 'ok', data: { version: '1.0' } });
             }
 
             return errorResponse('Not Found', 404);

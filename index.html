@@ -1519,9 +1519,9 @@
     </div>
 
     <!-- 加载层 -->
-    <div class="loading-overlay" id="loading-overlay">
-        <div class="loading-spinner"></div>
-        <div class="loading-text">正在处理...</div>
+    <div class="loading-overlay" id="loading-overlay" aria-live="polite" aria-busy="false">
+        <div class="loading-spinner" aria-hidden="true"></div>
+        <div class="loading-text" id="loading-text">正在处理...</div>
     </div>
 
     <!-- 提示消息 -->
@@ -1568,12 +1568,16 @@
         }
 
         function showLoading(text = '正在处理...') {
+            const overlay = document.getElementById('loading-overlay');
+            overlay.classList.add('show');
+            overlay.setAttribute('aria-busy', 'true');
             document.getElementById('loading-text').textContent = text;
-            document.getElementById('loading-overlay').classList.add('show');
         }
 
         function hideLoading() {
-            document.getElementById('loading-overlay').classList.remove('show');
+            const overlay = document.getElementById('loading-overlay');
+            overlay.setAttribute('aria-busy', 'false');
+            overlay.classList.remove('show');
         }
 
         function showToast(message, type = 'success') {
