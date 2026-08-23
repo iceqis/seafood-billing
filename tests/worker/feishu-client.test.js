@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createFeishuClient } from '../../worker/feishu-client.js';
+import { FeishuError, createFeishuClient } from '../../worker/feishu-client.js';
 
 const env = {
   FEISHU_APP_ID: 'app',
@@ -15,6 +15,50 @@ function response(body, init = {}) {
 }
 
 describe('Feishu client', () => {
+  it.each([
+    ['authentication', (fetchMock) => createFeishuClient(env, fetchMock).getTenantToken(), [], '飞书认证失败'],
+    ['read', (fetchMock) => createFeishuClient(env, fetchMock).listAllRecords('table'), [
+      response({ code: 0, tenant_access_token: 'token', expire: 7200 })
+    ], '读取飞书数据失败'],
+    ['write', (fetchMock) => createFeishuClient(env, fetchMock).createRecord('table', {}), [
+      response({ code: 0, tenant_access_token: 'token', expire: 7200 })
+    ], '写入飞书数据失败']
+  ])('normalizes %s network rejections without leaking the underlying error', async (
+    _operation,
+    invoke,
+    successfulResponses,
+    expectedMessage
+  ) => {
+    const fetchMock = vi.fn();
+    for (const successfulResponse of successfulResponses) {
+      fetchMock.mockResolvedValueOnce(successfulResponse);
+    }
+    fetchMock.mockRejectedValueOnce(new TypeError('socket failed with secret-token'));
+
+    const error = await invoke(fetchMock).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(FeishuError);
+    expect(error).toMatchObject({ message: expectedMessage, status: 502 });
+    expect(String(error)).not.toContain('secret-token');
+  });
+
+  it('normalizes response body read rejections', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ code: 0, tenant_access_token: 'token', expire: 7200 }))
+      .mockResolvedValueOnce({
+        ok: true,
+        text: vi.fn().mockRejectedValue(new TypeError('body stream exposed secret-token'))
+      });
+
+    const error = await createFeishuClient(env, fetchMock)
+      .listAllRecords('table')
+      .catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(FeishuError);
+    expect(error).toMatchObject({ message: '读取飞书数据失败', status: 502 });
+    expect(String(error)).not.toContain('secret-token');
+  });
+
   it('reads every page and carries filter, page size, and page token', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(response({ code: 0, tenant_access_token: 'token', expire: 7200 }))
@@ -142,5 +186,22 @@ describe('Feishu client', () => {
       .mockResolvedValueOnce(response({ code: 500, msg: 'write failed' }));
 
     await expect(createFeishuClient(env, fetchMock).createRecord('table', {})).rejects.toThrow('写入飞书数据失败');
+  });
+
+  it('preserves a safe HTTP 409 marker for document conflict handling', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ code: 0, tenant_access_token: 'token', expire: 7200 }))
+      .mockResolvedValueOnce(response({ code: 999 }, { status: 409 }));
+
+    const error = await createFeishuClient(env, fetchMock)
+      .createRecord('table', {})
+      .catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(FeishuError);
+    expect(error).toMatchObject({
+      message: '写入飞书数据失败',
+      status: 502,
+      upstreamStatus: 409
+    });
   });
 });

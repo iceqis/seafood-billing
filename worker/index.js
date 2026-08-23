@@ -1,673 +1,252 @@
 // Cloudflare Workers 后端代码
-// 作用：代理前端请求，调用飞书多维表格 API，完整适配海鲜批发记账系统 5 张表
+// 作用：精确路由业务请求，并通过服务层访问现有 5 张飞书表
 
-import {
-    FIELDS,
-    STATUS_TO_FEISHU,
-    customerFromFeishu,
-    orderFromFeishu,
-    productFromFeishu,
-    purchaseFromFeishu,
-    statusFromFeishu,
-    statusToFeishu,
-    supplierFromFeishu
-} from './field-mappers.js';
+import { FeishuError, createFeishuClient } from './feishu-client.js';
+import { statusFromFeishu } from './field-mappers.js';
 import { corsHeaders, errorResponse, jsonResponse } from './response.js';
-import { createFeishuClient } from './feishu-client.js';
-import {
-    ValidationError,
-    validateDate,
-    validateOrderTransition,
-    validatePositiveNumber,
-    validateRequiredText
-} from './validation.js';
+import { createCustomersService } from './services/customers.js';
+import { createOrdersService } from './services/orders.js';
+import { createProductsService } from './services/products.js';
+import { createPurchasesService } from './services/purchases.js';
+import { createStatisticsService } from './services/statistics.js';
+import { createSuppliersService } from './services/suppliers.js';
+import { ValidationError } from './validation.js';
 
-// ==================== 环境变量配置说明 ====================
-// 在 Cloudflare Workers 控制台设置以下环境变量：
-// FEISHU_APP_ID      - 飞书应用的 App ID
-// FEISHU_APP_SECRET  - 飞书应用的 App Secret
-// FEISHU_BASE_TOKEN  - 多维表格 URL 中 base/ 后面的字符串
-// TABLE_CUSTOMERS    - 客户表 table_id
-// TABLE_SUPPLIERS    - 供应商表 table_id
-// TABLE_PRODUCTS     - 商品规格表 table_id
-// TABLE_ORDERS       - 订单表 table_id
-// TABLE_PURCHASES    - 进货表 table_id
-// ===========================================================
+const REQUIRED_ENV = Object.freeze([
+  'FEISHU_APP_ID',
+  'FEISHU_APP_SECRET',
+  'FEISHU_BASE_TOKEN',
+  'TABLE_CUSTOMERS',
+  'TABLE_SUPPLIERS',
+  'TABLE_PRODUCTS',
+  'TABLE_ORDERS',
+  'TABLE_PURCHASES'
+]);
 
-// 单号前缀
-const ID_PREFIX = {
-    order: 'XSD',
-    purchase: 'CGD'
-};
-
-// ==================== 工具函数 ====================
-
-// 获取今天日期 YYYY-MM-DD
 function getToday() {
-    return new Date().toISOString().split('T')[0];
+  return new Date().toISOString().split('T')[0];
 }
 
-// 获取当前月份 YYYY-MM
-function getCurrentMonth() {
-    return getToday().substring(0, 7);
-}
-
-// 生成单号：前缀 + YYYYMMDD + 3位序号
-async function generateId(prefix, tableId, feishu) {
-    const date = getToday().replace(/-/g, '');
-    const count = await getRecordCount(tableId, feishu);
-    const seq = String(count + 1).padStart(3, '0');
-    return `${prefix}${date}${seq}`;
-}
-
-// 获取记录总数（用于生成单号）
-async function getRecordCount(tableId, feishu) {
-    return (await feishu.listAllRecords(tableId)).length;
-}
-
-// 根据名称删除记录（用于客户/供应商/商品删除）
-async function deleteRecordByName(feishu, tableId, fieldName, name) {
-    const filter = { field_name: fieldName, operator: 'is', value: [name] };
-    const items = await feishu.listAllRecords(tableId, filter);
-    if (items.length === 0) {
-        throw new Error('记录不存在');
-    }
-    await feishu.deleteRecord(tableId, items[0].record_id);
-}
-
-// 构造单一条件筛选
-function singleCondition(fieldName, operator, value) {
-    return { field_name: fieldName, operator, value: Array.isArray(value) ? value : [value] };
-}
-
-// 构造多条件 AND 筛选
-function andFilter(conditions) {
-    if (conditions.length === 0) return null;
-    if (conditions.length === 1) return conditions[0];
-    return { conjunction: 'and', conditions };
-}
-
-// ==================== API 处理器 ====================
-
-// 客户相关
-async function handleCustomers(request, env, feishu, url) {
-    const tableId = env.TABLE_CUSTOMERS;
-
-    if (request.method === 'GET') {
-        const items = await feishu.listAllRecords(tableId);
-        return jsonResponse({ code: 0, message: 'success', data: items.map(customerFromFeishu) });
-    }
-
-    if (request.method === 'POST') {
-        const body = await request.json();
-        if (!body.name) return errorResponse('客户名称不能为空', 400);
-        const fields = {
-            [FIELDS.customers.name]: body.name,
-            [FIELDS.customers.phone]: body.phone || '',
-            [FIELDS.customers.settlement]: body.settlement || '',
-            [FIELDS.customers.remark]: body.remark || ''
-        };
-        const record = await feishu.createRecord(tableId, fields);
-        return jsonResponse({ code: 0, message: 'success', data: customerFromFeishu(record) });
-    }
-
-    if (request.method === 'DELETE') {
-        const name = decodeURIComponent(url.pathname.split('/').pop());
-        await deleteRecordByName(feishu, tableId, FIELDS.customers.name, name);
-        return jsonResponse({ code: 0, message: 'success', data: null });
-    }
-
-    return errorResponse('Method Not Allowed', 405);
-}
-
-// 供应商相关
-async function handleSuppliers(request, env, feishu, url) {
-    const tableId = env.TABLE_SUPPLIERS;
-
-    if (request.method === 'GET') {
-        const items = await feishu.listAllRecords(tableId);
-        return jsonResponse({ code: 0, message: 'success', data: items.map(supplierFromFeishu) });
-    }
-
-    if (request.method === 'POST') {
-        const body = await request.json();
-        if (!body.name) return errorResponse('供应商名称不能为空', 400);
-        const fields = {
-            [FIELDS.suppliers.name]: body.name,
-            [FIELDS.suppliers.phone]: body.phone || '',
-            [FIELDS.suppliers.remark]: body.remark || ''
-        };
-        const record = await feishu.createRecord(tableId, fields);
-        return jsonResponse({ code: 0, message: 'success', data: supplierFromFeishu(record) });
-    }
-
-    if (request.method === 'DELETE') {
-        const name = decodeURIComponent(url.pathname.split('/').pop());
-        await deleteRecordByName(feishu, tableId, FIELDS.suppliers.name, name);
-        return jsonResponse({ code: 0, message: 'success', data: null });
-    }
-
-    return errorResponse('Method Not Allowed', 405);
-}
-
-// 商品相关
-async function handleProducts(request, env, feishu, url) {
-    const tableId = env.TABLE_PRODUCTS;
-
-    if (request.method === 'GET') {
-        const items = await feishu.listAllRecords(tableId);
-        return jsonResponse({ code: 0, message: 'success', data: items.map(productFromFeishu) });
-    }
-
-    if (request.method === 'POST') {
-        const body = await request.json();
-        if (!body.name) return errorResponse('商品名称不能为空', 400);
-        const fields = {
-            [FIELDS.products.name]: body.name,
-            [FIELDS.products.specs]: body.specs || ''
-        };
-        const record = await feishu.createRecord(tableId, fields);
-        return jsonResponse({ code: 0, message: 'success', data: productFromFeishu(record) });
-    }
-
-    if (request.method === 'DELETE') {
-        const name = decodeURIComponent(url.pathname.split('/').pop());
-        await deleteRecordByName(feishu, tableId, FIELDS.products.name, name);
-        return jsonResponse({ code: 0, message: 'success', data: null });
-    }
-
-    return errorResponse('Method Not Allowed', 405);
-}
-
-// 订单相关
-async function handleOrders(request, env, feishu, url) {
-    const tableId = env.TABLE_ORDERS;
-
-    // GET /api/orders
-    if (request.method === 'GET') {
-        const date = url.searchParams.get('date');
-        const status = url.searchParams.get('status');
-        const customer = url.searchParams.get('customer');
-        const conditions = [];
-
-        if (date) {
-            conditions.push(singleCondition(FIELDS.orders.date, 'is', date));
-        }
-        if (status) {
-            const statuses = status.split(',').map(s => statusToFeishu(s)).filter(Boolean);
-            if (statuses.length === 1) {
-                conditions.push(singleCondition(FIELDS.orders.status, 'is', statuses[0]));
-            } else if (statuses.length > 1) {
-                conditions.push({ field_name: FIELDS.orders.status, operator: 'isAnyOf', value: statuses });
-            }
-        }
-        if (customer) {
-            conditions.push(singleCondition(FIELDS.orders.customer, 'is', customer));
-        }
-
-        const filter = andFilter(conditions);
-        const items = await feishu.listAllRecords(tableId, filter);
-        const data = items.map(orderFromFeishu);
-        return jsonResponse({ code: 0, message: 'success', data });
-    }
-
-    // POST /api/orders - 创建预订单
-    if (request.method === 'POST') {
-        const body = await request.json();
-        if (!body.customer || !body.spec || !body.orderWeight) {
-            return errorResponse('客户、规格、报货重量不能为空', 400);
-        }
-
-        const customer = validateRequiredText(body.customer, '客户');
-        const spec = validateRequiredText(body.spec, '规格');
-        const orderWeight = validatePositiveNumber(body.orderWeight, '报货重量');
-        const date = body.date ? validateDate(body.date) : getToday();
-
-        const orderId = await generateId(ID_PREFIX.order, tableId, feishu);
-        const fields = {
-            [FIELDS.orders.id]: orderId,
-            [FIELDS.orders.date]: date,
-            [FIELDS.orders.customer]: customer,
-            [FIELDS.orders.product]: body.product || '基围虾',
-            [FIELDS.orders.spec]: spec,
-            [FIELDS.orders.orderWeight]: orderWeight,
-            [FIELDS.orders.actualWeight]: '',
-            [FIELDS.orders.price]: '',
-            [FIELDS.orders.amount]: '',
-            [FIELDS.orders.status]: STATUS_TO_FEISHU.pending_ship,
-            [FIELDS.orders.settled]: false
-        };
-        const record = await feishu.createRecord(tableId, fields);
-        return jsonResponse({ code: 0, message: 'success', data: orderFromFeishu(record) });
-    }
-
-    // DELETE /api/orders/:id
-    const deleteMatch = url.pathname.match(/^\/api\/orders\/([^/]+)$/);
-    if (deleteMatch && request.method === 'DELETE') {
-        const id = deleteMatch[1];
-        // 先查询 recordId
-        const filter = singleCondition(FIELDS.orders.id, 'is', id);
-        const items = await feishu.listAllRecords(tableId, filter);
-        if (items.length === 0) return errorResponse('订单不存在', 404);
-        await feishu.deleteRecord(tableId, items[0].record_id);
-        return jsonResponse({ code: 0, message: 'success', data: null });
-    }
-
-    // PUT /api/orders/:id - 更新订单（发货/定价/修改）
-    const updateMatch = url.pathname.match(/^\/api\/orders\/([^/]+)$/);
-    if (updateMatch && request.method === 'PUT') {
-        const id = updateMatch[1];
-        const body = await request.json();
-
-        const filter = singleCondition(FIELDS.orders.id, 'is', id);
-        const items = await feishu.listAllRecords(tableId, filter);
-        if (items.length === 0) return errorResponse('订单不存在', 404);
-
-        const record = items[0];
-        const current = orderFromFeishu(record);
-        const updateFields = {};
-        const targetStatus = body.status === undefined ? undefined : statusFromFeishu(body.status);
-
-        if (body.actualWeight !== undefined) {
-            updateFields[FIELDS.orders.actualWeight] = validatePositiveNumber(body.actualWeight, '实际发货重量');
-        }
-        if (body.price !== undefined) {
-            updateFields[FIELDS.orders.price] = validatePositiveNumber(body.price, '单价');
-        }
-        if (targetStatus !== undefined) {
-            if (targetStatus !== current.status) {
-                validateOrderTransition(current.status, targetStatus);
-            }
-            updateFields[FIELDS.orders.status] = statusToFeishu(targetStatus);
-        }
-
-        // 重新计算金额
-        const newActualWeight = updateFields[FIELDS.orders.actualWeight] !== undefined
-            ? updateFields[FIELDS.orders.actualWeight]
-            : current.actualWeight;
-        const newPrice = updateFields[FIELDS.orders.price] !== undefined
-            ? updateFields[FIELDS.orders.price]
-            : current.price;
-
-        if (newActualWeight && newPrice) {
-            updateFields[FIELDS.orders.amount] = parseFloat((newActualWeight * newPrice).toFixed(2));
-        }
-
-        // 如果是修改订单，状态重置为未开单
-        if (targetStatus === 'pending_bill' && current.status === 'settled') {
-            updateFields[FIELDS.orders.settled] = false;
-        }
-
-        const updated = await feishu.updateRecord(tableId, record.record_id, updateFields);
-        return jsonResponse({ code: 0, message: 'success', data: orderFromFeishu(updated) });
-    }
-
-    return errorResponse('Method Not Allowed', 405);
-}
-
-// 统一开单
-async function handleBillOrders(request, env, feishu) {
-    const body = await request.json();
-    if (!body.ids || !Array.isArray(body.ids) || body.ids.length === 0) {
-        return errorResponse('订单ID列表不能为空', 400);
-    }
-
-    const tableId = env.TABLE_ORDERS;
-    let totalAmount = 0;
-    const results = [];
-
-    for (const id of body.ids) {
-        const filter = singleCondition(FIELDS.orders.id, 'is', id);
-        const items = await feishu.listAllRecords(tableId, filter);
-        if (items.length === 0) continue;
-
-        const order = orderFromFeishu(items[0]);
-        if (order.status !== 'pending_bill') continue;
-
-        const updated = await feishu.updateRecord(tableId, items[0].record_id, {
-            [FIELDS.orders.status]: STATUS_TO_FEISHU.unsettled
-        });
-        const formatted = orderFromFeishu(updated);
-        totalAmount += formatted.amount;
-        results.push(formatted);
-    }
-
-    return jsonResponse({
-        code: 0,
-        message: 'success',
-        data: { count: results.length, totalAmount: parseFloat(totalAmount.toFixed(2)), orders: results }
-    });
-}
-
-// 结算订单
-async function handleSettleOrders(request, env, feishu) {
-    const body = await request.json();
-    if (!body.ids || !Array.isArray(body.ids) || body.ids.length === 0) {
-        return errorResponse('订单ID列表不能为空', 400);
-    }
-
-    const tableId = env.TABLE_ORDERS;
-    let totalAmount = 0;
-    const results = [];
-
-    for (const id of body.ids) {
-        const filter = singleCondition(FIELDS.orders.id, 'is', id);
-        const items = await feishu.listAllRecords(tableId, filter);
-        if (items.length === 0) continue;
-
-        const order = orderFromFeishu(items[0]);
-        if (order.status !== 'unsettled') continue;
-
-        const updated = await feishu.updateRecord(tableId, items[0].record_id, {
-            [FIELDS.orders.status]: STATUS_TO_FEISHU.settled,
-            [FIELDS.orders.settled]: true
-        });
-        const formatted = orderFromFeishu(updated);
-        totalAmount += formatted.amount;
-        results.push(formatted);
-    }
-
-    return jsonResponse({
-        code: 0,
-        message: 'success',
-        data: { count: results.length, totalAmount: parseFloat(totalAmount.toFixed(2)), orders: results }
-    });
-}
-
-// 进货相关
-async function handlePurchases(request, env, feishu, url) {
-    const tableId = env.TABLE_PURCHASES;
-
-    if (request.method === 'GET') {
-        const date = url.searchParams.get('date');
-        const conditions = [];
-        if (date) {
-            conditions.push(singleCondition(FIELDS.purchases.date, 'is', date));
-        }
-        const filter = andFilter(conditions);
-        const items = await feishu.listAllRecords(tableId, filter);
-        return jsonResponse({ code: 0, message: 'success', data: items.map(purchaseFromFeishu) });
-    }
-
-    if (request.method === 'POST') {
-        const body = await request.json();
-        if (!body.supplier || !body.spec || !body.weight || !body.price) {
-            return errorResponse('供应商、规格、进货重量、进货单价不能为空', 400);
-        }
-
-        const supplier = validateRequiredText(body.supplier, '供应商');
-        const spec = validateRequiredText(body.spec, '规格');
-        const date = body.date ? validateDate(body.date) : getToday();
-        const weight = validatePositiveNumber(body.weight, '进货重量');
-        const price = validatePositiveNumber(body.price, '进货单价');
-        const purchaseId = await generateId(ID_PREFIX.purchase, tableId, feishu);
-        const fields = {
-            [FIELDS.purchases.id]: purchaseId,
-            [FIELDS.purchases.date]: date,
-            [FIELDS.purchases.supplier]: supplier,
-            [FIELDS.purchases.product]: body.product || '基围虾',
-            [FIELDS.purchases.spec]: spec,
-            [FIELDS.purchases.weight]: weight,
-            [FIELDS.purchases.price]: price,
-            [FIELDS.purchases.amount]: parseFloat((weight * price).toFixed(2))
-        };
-        const record = await feishu.createRecord(tableId, fields);
-        return jsonResponse({ code: 0, message: 'success', data: purchaseFromFeishu(record) });
-    }
-
-    if (request.method === 'DELETE') {
-        const id = url.pathname.split('/').pop();
-        const filter = singleCondition(FIELDS.purchases.id, 'is', id);
-        const items = await feishu.listAllRecords(tableId, filter);
-        if (items.length === 0) return errorResponse('进货记录不存在', 404);
-        await feishu.deleteRecord(tableId, items[0].record_id);
-        return jsonResponse({ code: 0, message: 'success', data: null });
-    }
-
-    return errorResponse('Method Not Allowed', 405);
-}
-
-// 统计相关
-async function handleStats(request, env, feishu, url) {
-    const date = url.searchParams.get('date') || getToday();
-    const month = date.substring(0, 7);
-    const ordersTable = env.TABLE_ORDERS;
-    const purchasesTable = env.TABLE_PURCHASES;
-
-    // 今日销售：状态为未结算或已结算
-    const todaySalesConditions = [
-        singleCondition(FIELDS.orders.date, 'is', date),
-        {
-            field_name: FIELDS.orders.status,
-            operator: 'isAnyOf',
-            value: [STATUS_TO_FEISHU.unsettled, STATUS_TO_FEISHU.settled]
-        }
-    ];
-    const todaySalesItems = await feishu.listAllRecords(ordersTable, andFilter(todaySalesConditions));
-    const todaySales = todaySalesItems.reduce((sum, item) => sum + orderFromFeishu(item).amount, 0);
-    const todayDealCount = todaySalesItems.length;
-
-    // 今日进货
-    const todayPurchaseItems = await feishu.listAllRecords(purchasesTable, singleCondition(FIELDS.purchases.date, 'is', date));
-    const todayPurchase = todayPurchaseItems.reduce((sum, item) => sum + purchaseFromFeishu(item).amount, 0);
-
-    // 本月销售
-    const monthSalesConditions = [
-        singleCondition(FIELDS.orders.date, 'isGreaterThanOrEqualTo', month + '-01'),
-        singleCondition(FIELDS.orders.date, 'isLessThanOrEqualTo', month + '-31'),
-        {
-            field_name: FIELDS.orders.status,
-            operator: 'isAnyOf',
-            value: [STATUS_TO_FEISHU.unsettled, STATUS_TO_FEISHU.settled]
-        }
-    ];
-    const monthSalesItems = await feishu.listAllRecords(ordersTable, andFilter(monthSalesConditions));
-    const monthSales = monthSalesItems.reduce((sum, item) => sum + orderFromFeishu(item).amount, 0);
-
-    return jsonResponse({
-        code: 0,
-        message: 'success',
-        data: {
-            todaySales: parseFloat(todaySales.toFixed(2)),
-            todayDealCount,
-            todayPurchase: parseFloat(todayPurchase.toFixed(2)),
-            monthSales: parseFloat(monthSales.toFixed(2))
-        }
-    });
-}
-
-// 明细相关
-async function handleDetails(request, env, feishu, url) {
-    const type = url.pathname.split('/').pop();
-    const date = url.searchParams.get('date') || getToday();
-    const month = date.substring(0, 7);
-    const ordersTable = env.TABLE_ORDERS;
-    const purchasesTable = env.TABLE_PURCHASES;
-
-    let data = [];
-    let total = 0;
-
-    switch (type) {
-        case 'today-sales': {
-            const filter = andFilter([
-                singleCondition(FIELDS.orders.date, 'is', date),
-                {
-                    field_name: FIELDS.orders.status,
-                    operator: 'isAnyOf',
-                    value: [STATUS_TO_FEISHU.unsettled, STATUS_TO_FEISHU.settled]
-                }
-            ]);
-            const items = await feishu.listAllRecords(ordersTable, filter);
-            data = items.map(orderFromFeishu);
-            total = data.reduce((sum, o) => sum + o.amount, 0);
-            break;
-        }
-        case 'today-deals': {
-            const filter = andFilter([
-                singleCondition(FIELDS.orders.date, 'is', date),
-                {
-                    field_name: FIELDS.orders.status,
-                    operator: 'isAnyOf',
-                    value: [STATUS_TO_FEISHU.unsettled, STATUS_TO_FEISHU.settled]
-                }
-            ]);
-            const items = await feishu.listAllRecords(ordersTable, filter);
-            data = items.map(orderFromFeishu);
-            total = data.length;
-            break;
-        }
-        case 'today-purchase': {
-            const items = await feishu.listAllRecords(purchasesTable, singleCondition(FIELDS.purchases.date, 'is', date));
-            data = items.map(purchaseFromFeishu);
-            total = data.reduce((sum, p) => sum + p.amount, 0);
-            break;
-        }
-        case 'month-sales': {
-            const filter = andFilter([
-                singleCondition(FIELDS.orders.date, 'isGreaterThanOrEqualTo', month + '-01'),
-                singleCondition(FIELDS.orders.date, 'isLessThanOrEqualTo', month + '-31'),
-                {
-                    field_name: FIELDS.orders.status,
-                    operator: 'isAnyOf',
-                    value: [STATUS_TO_FEISHU.unsettled, STATUS_TO_FEISHU.settled]
-                }
-            ]);
-            const items = await feishu.listAllRecords(ordersTable, filter);
-            data = items.map(orderFromFeishu);
-            total = data.reduce((sum, o) => sum + o.amount, 0);
-            break;
-        }
-        default:
-            return errorResponse('未知明细类型', 400);
-    }
-
-    return jsonResponse({
-        code: 0,
-        message: 'success',
-        data: { count: data.length, total: parseFloat(total.toFixed(2)), items: data }
-    });
-}
-
-// ==================== 主入口 ====================
-
-async function routeRequest(request, env) {
-    const url = new URL(request.url);
-    const path = url.pathname;
-
-    try {
-            // 健康检查不依赖飞书配置或令牌
-            if (path === '/api/health') {
-                return jsonResponse({
-                    code: 0,
-                    message: 'ok',
-                    data: { version: '3.0.1', service: 'seafood-billing-api' }
-                });
-            }
-
-            if (path === '/api/orders/bill' && request.method !== 'POST') {
-                return errorResponse('Method Not Allowed', 405);
-            }
-
-            if (path === '/api/orders/settle' && request.method !== 'POST') {
-                return errorResponse('Method Not Allowed', 405);
-            }
-
-            // 环境变量校验
-            const requiredEnv = ['FEISHU_APP_ID', 'FEISHU_APP_SECRET', 'FEISHU_BASE_TOKEN',
-                'TABLE_CUSTOMERS', 'TABLE_SUPPLIERS', 'TABLE_PRODUCTS', 'TABLE_ORDERS', 'TABLE_PURCHASES'];
-            for (const key of requiredEnv) {
-                if (!env[key]) {
-                    return errorResponse(`缺少环境变量: ${key}`, 500);
-                }
-            }
-
-            const feishu = createFeishuClient(env);
-
-            // 路由分发
-            if (path === '/api/customers' || path.startsWith('/api/customers/')) {
-                return await handleCustomers(request, env, feishu, url);
-            }
-
-            if (path === '/api/suppliers' || path.startsWith('/api/suppliers/')) {
-                return await handleSuppliers(request, env, feishu, url);
-            }
-
-            if (path === '/api/products' || path.startsWith('/api/products/')) {
-                return await handleProducts(request, env, feishu, url);
-            }
-
-            if (path === '/api/orders/bill') {
-                return await handleBillOrders(request, env, feishu);
-            }
-
-            if (path === '/api/orders/settle') {
-                return await handleSettleOrders(request, env, feishu);
-            }
-
-            if (path === '/api/orders' || /^\/api\/orders\/[^/]+$/.test(path)) {
-                return await handleOrders(request, env, feishu, url);
-            }
-
-            if (path === '/api/purchases' || path.startsWith('/api/purchases/')) {
-                return await handlePurchases(request, env, feishu, url);
-            }
-
-            if (path === '/api/stats/home') {
-                return await handleStats(request, env, feishu, url);
-            }
-
-            if (path.startsWith('/api/details/')) {
-                return await handleDetails(request, env, feishu, url);
-            }
-
-        return errorResponse('Not Found', 404);
-    } catch (err) {
-        const status = err instanceof ValidationError ? err.status : 500;
-        return errorResponse(err.message, status);
-    }
+function successResponse(data) {
+  return jsonResponse({ code: 0, message: 'success', data });
 }
 
 function parseAllowedOrigins(value) {
-    return String(value ?? '')
-        .split(',')
-        .map(origin => origin.trim())
-        .filter(Boolean);
+  return String(value ?? '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
 }
 
-function withCors(response, cors) {
-    const headers = new Headers(response.headers);
-    for (const [name, value] of Object.entries(cors)) {
-        headers.set(name, value);
-    }
-    return new Response(response.body, {
-        status: response.status,
-        statusText: response.statusText,
-        headers
+function withHeaders(response, extraHeaders) {
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(extraHeaders)) {
+    headers.set(name, value);
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers
+  });
+}
+
+function assertEnvironment(env) {
+  for (const key of REQUIRED_ENV) {
+    if (!env[key]) throw new ValidationError(`缺少环境变量: ${key}`, 500);
+  }
+}
+
+function methodNotAllowed() {
+  return errorResponse('Method Not Allowed', 405);
+}
+
+function createServices(env) {
+  const feishu = createFeishuClient(env);
+  return {
+    customers: createCustomersService(feishu, env),
+    suppliers: createSuppliersService(feishu, env),
+    products: createProductsService(feishu, env),
+    orders: createOrdersService(feishu, env),
+    purchases: createPurchasesService(feishu, env),
+    statistics: createStatisticsService(feishu, env)
+  };
+}
+
+async function translateLegacyOrderUpdate(orders, id, body) {
+  const targetStatus = body.status === undefined ? undefined : statusFromFeishu(body.status);
+  const hasWeight = body.actualWeight !== undefined;
+  const hasPrice = body.price !== undefined;
+
+  if (hasWeight && !hasPrice && targetStatus === 'shipped') {
+    return orders.ship(id, body.actualWeight);
+  }
+  if (!hasWeight && hasPrice && targetStatus === 'pending_bill') {
+    return orders.price(id, body.price);
+  }
+  if (hasWeight && hasPrice && (targetStatus === undefined || targetStatus === 'pending_bill')) {
+    return orders.edit(id, { actualWeight: body.actualWeight, price: body.price });
+  }
+  throw new ValidationError('不支持的订单更新操作');
+}
+
+async function routeRequest(request, env) {
+  const url = new URL(request.url);
+  const { pathname: path } = url;
+
+  if (path === '/api/health') {
+    return jsonResponse({
+      code: 0,
+      message: 'ok',
+      data: { version: '3.0.1', service: 'seafood-billing-api' }
     });
+  }
+
+  if ((path === '/api/orders/bill' || path === '/api/orders/settle') && request.method !== 'POST') {
+    return methodNotAllowed();
+  }
+  const explicitOrderMatch = path.match(/^\/api\/orders\/([^/]+)\/(ship|price)$/);
+  if (explicitOrderMatch && request.method !== 'PUT') return methodNotAllowed();
+
+  assertEnvironment(env);
+  const services = createServices(env);
+
+  if (path === '/api/customers') {
+    if (request.method === 'GET') return successResponse(await services.customers.list());
+    if (request.method === 'POST') return successResponse(await services.customers.create(await request.json()));
+    return methodNotAllowed();
+  }
+  const customerMatch = path.match(/^\/api\/customers\/([^/]+)$/);
+  if (customerMatch) {
+    if (request.method !== 'DELETE') return methodNotAllowed();
+    return successResponse(await services.customers.remove(decodeURIComponent(customerMatch[1])));
+  }
+
+  if (path === '/api/suppliers') {
+    if (request.method === 'GET') return successResponse(await services.suppliers.list());
+    if (request.method === 'POST') return successResponse(await services.suppliers.create(await request.json()));
+    return methodNotAllowed();
+  }
+  const supplierMatch = path.match(/^\/api\/suppliers\/([^/]+)$/);
+  if (supplierMatch) {
+    if (request.method !== 'DELETE') return methodNotAllowed();
+    return successResponse(await services.suppliers.remove(decodeURIComponent(supplierMatch[1])));
+  }
+
+  if (path === '/api/products') {
+    if (request.method === 'GET') return successResponse(await services.products.list());
+    if (request.method === 'POST') return successResponse(await services.products.create(await request.json()));
+    return methodNotAllowed();
+  }
+  const productMatch = path.match(/^\/api\/products\/([^/]+)$/);
+  if (productMatch) {
+    if (request.method !== 'DELETE') return methodNotAllowed();
+    return successResponse(await services.products.remove(decodeURIComponent(productMatch[1])));
+  }
+
+  if (path === '/api/orders/bill') {
+    const body = await request.json();
+    return successResponse(await services.orders.bill(body.ids, body.customer));
+  }
+  if (path === '/api/orders/settle') {
+    const body = await request.json();
+    return successResponse(await services.orders.settle(body.ids));
+  }
+  if (explicitOrderMatch) {
+    const id = decodeURIComponent(explicitOrderMatch[1]);
+    const operation = explicitOrderMatch[2];
+    const body = await request.json();
+    const result = operation === 'ship'
+      ? await services.orders.ship(id, body.actualWeight)
+      : await services.orders.price(id, body.price);
+    return successResponse(result);
+  }
+  if (path === '/api/orders') {
+    if (request.method === 'GET') {
+      return successResponse(await services.orders.list({
+        date: url.searchParams.get('date'),
+        status: url.searchParams.get('status'),
+        customer: url.searchParams.get('customer')
+      }));
+    }
+    if (request.method === 'POST') {
+      return successResponse(await services.orders.createPreorder(await request.json()));
+    }
+    return methodNotAllowed();
+  }
+  const orderMatch = path.match(/^\/api\/orders\/([^/]+)$/);
+  if (orderMatch) {
+    const id = decodeURIComponent(orderMatch[1]);
+    if (request.method === 'DELETE') return successResponse(await services.orders.remove(id));
+    if (request.method === 'PUT') {
+      return successResponse(await translateLegacyOrderUpdate(services.orders, id, await request.json()));
+    }
+    return methodNotAllowed();
+  }
+
+  if (path === '/api/purchases') {
+    if (request.method === 'GET') {
+      return successResponse(await services.purchases.list({ date: url.searchParams.get('date') }));
+    }
+    if (request.method === 'POST') {
+      return successResponse(await services.purchases.create(await request.json()));
+    }
+    return methodNotAllowed();
+  }
+  const purchaseMatch = path.match(/^\/api\/purchases\/([^/]+)$/);
+  if (purchaseMatch) {
+    if (request.method !== 'DELETE') return methodNotAllowed();
+    return successResponse(await services.purchases.remove(decodeURIComponent(purchaseMatch[1])));
+  }
+
+  if (path === '/api/stats/home') {
+    if (request.method !== 'GET') return methodNotAllowed();
+    return successResponse(await services.statistics.home(url.searchParams.get('date') || getToday()));
+  }
+  const detailMatch = path.match(/^\/api\/details\/([^/]+)$/);
+  if (detailMatch) {
+    if (request.method !== 'GET') return methodNotAllowed();
+    return successResponse(await services.statistics.details(
+      decodeURIComponent(detailMatch[1]),
+      url.searchParams.get('date') || getToday()
+    ));
+  }
+
+  return errorResponse('Not Found', 404);
+}
+
+function responseForError(error) {
+  if (error instanceof ValidationError) return errorResponse(error.message, error.status);
+  if (error instanceof FeishuError) return errorResponse(error.message, 502);
+  return errorResponse('服务器内部错误', 500);
 }
 
 export default {
-    async fetch(request, env, ctx) {
-        const origin = request.headers.get('Origin') ?? '';
-        const cors = corsHeaders(origin, parseAllowedOrigins(env.ALLOWED_ORIGINS));
+  async fetch(request, env, ctx) {
+    const startedAt = Date.now();
+    const url = new URL(request.url);
+    const requestId = crypto.randomUUID();
+    const cors = corsHeaders(
+      request.headers.get('Origin') ?? '',
+      parseAllowedOrigins(env.ALLOWED_ORIGINS)
+    );
 
-        if (request.method === 'OPTIONS') {
-            return new Response(null, { headers: cors });
-        }
-
-        const response = await routeRequest(request, env);
-        return withCors(response, cors);
+    let response;
+    try {
+      response = request.method === 'OPTIONS'
+        ? new Response(null, { headers: cors })
+        : await routeRequest(request, env);
+    } catch (error) {
+      response = responseForError(error);
     }
-};
 
-// ==================== 部署说明 ====================
-// 1. 在 cloudflare.com 注册账号并登录
-// 2. 进入 Workers & Pages
-// 3. 创建新的 Worker
-// 4. 把本代码完整粘贴进去
-// 5. 在 Worker 设置中配置环境变量：
-//    FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_BASE_TOKEN
-//    TABLE_CUSTOMERS, TABLE_SUPPLIERS, TABLE_PRODUCTS, TABLE_ORDERS, TABLE_PURCHASES
-// 6. 保存并部署
-// 7. 复制 Worker 访问地址，填到前端 seafood_billing_web.html 的 API_BASE 中
-// 8. 前端页面也需要修改 fetch 调用，适配本 API 的返回格式
+    response = withHeaders(response, { ...cors, 'X-Request-Id': requestId });
+    console.log({
+      requestId,
+      method: request.method,
+      path: url.pathname,
+      status: response.status,
+      durationMs: Date.now() - startedAt
+    });
+    return response;
+  }
+};
