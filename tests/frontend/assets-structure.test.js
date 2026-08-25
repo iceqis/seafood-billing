@@ -23,7 +23,11 @@ describe('frontend extracted assets', () => {
     expect(html).not.toMatch(/<script(?:\s[^>]*)?>[\s\S]*?function\s+\w+/);
     expect(() => read('assets/js/app.js')).not.toThrow();
     expect(() => read('assets/js/auth.js')).not.toThrow();
-    expect(() => read('assets/js/pages/home.js')).toThrow();
+    for (const page of ['home', 'preorder', 'orders', 'customers', 'purchases', 'products', 'profile']) {
+      expect(() => read(`assets/js/pages/${page}.js`)).not.toThrow();
+    }
+    expect(html).toContain('Content-Security-Policy');
+    expect(html).not.toMatch(/\bon(?:click|input|change|submit)=/i);
   });
 
   it('keeps key rules in their extracted layers and isolates media queries', () => {

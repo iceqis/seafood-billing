@@ -6,6 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self' https://seafood-billing-api.iceqy0313.workers.dev; img-src 'self' data:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; form-action 'self'">
     <title>海鲜批发记账系统 v3.0</title>
     <link rel="stylesheet" href="./assets/css/base.css">
     <link rel="stylesheet" href="./assets/css/components.css">
@@ -74,19 +75,19 @@
                 ⚠️ 请先修改页面中的 API_BASE 为你的 Cloudflare Worker 地址
             </div>
             <div class="stats-grid">
-                <div class="stat-card" onclick="showStatDetail('today-sales')">
+                <div class="stat-card">
                     <div class="stat-label">今日销售额</div>
                     <div class="stat-value" id="home-today-sales">¥0.00</div>
                 </div>
-                <div class="stat-card" onclick="showStatDetail('today-deals')">
+                <div class="stat-card">
                     <div class="stat-label">成交笔数</div>
                     <div class="stat-value" id="home-deal-count">0</div>
                 </div>
-                <div class="stat-card" onclick="showStatDetail('today-purchase')">
+                <div class="stat-card">
                     <div class="stat-label">今日进货金额</div>
                     <div class="stat-value" id="home-today-purchase">¥0.00</div>
                 </div>
-                <div class="stat-card" onclick="showStatDetail('month-sales')">
+                <div class="stat-card">
                     <div class="stat-label">本月销售额</div>
                     <div class="stat-value" id="home-month-sales">¥0.00</div>
                 </div>
@@ -98,19 +99,19 @@
                 </div>
                 <div class="card-body">
                     <div class="quick-grid">
-                        <div class="quick-card" onclick="goPage('preorder')">
+                        <div class="quick-card">
                             <div class="quick-icon">📝</div>
                             <span class="quick-text">预订单</span>
                         </div>
-                        <div class="quick-card" onclick="goPage('purchase')">
+                        <div class="quick-card">
                             <div class="quick-icon">🚚</div>
                             <span class="quick-text">进货单</span>
                         </div>
-                        <div class="quick-card" onclick="goPage('orders')">
+                        <div class="quick-card">
                             <div class="quick-icon">📋</div>
                             <span class="quick-text">订单</span>
                         </div>
-                        <div class="quick-card" onclick="goPage('customers')">
+                        <div class="quick-card">
                             <div class="quick-icon">👥</div>
                             <span class="quick-text">客户</span>
                         </div>
@@ -254,7 +255,7 @@
                                     <span class="font-semibold" id="preview-weight">-</span>
                                 </div>
                             </div>
-                            <button class="btn btn-primary btn-block" onclick="savePreorder()">
+                            <button class="btn btn-primary btn-block">
                                 💾 保存预订单
                             </button>
                         </div>
@@ -270,7 +271,7 @@
                     <div class="card">
                         <div class="card-header">
                             <div class="card-title"><span class="icon">🏭</span> 供应商管理</div>
-                            <button class="btn btn-primary btn-sm" onclick="openAddSupplierModal()">➕ 添加供应商</button>
+                            <button class="btn btn-primary btn-sm">➕ 添加供应商</button>
                         </div>
                         <div class="card-body">
                             <div id="supplier-list">
@@ -348,7 +349,7 @@
                                 <span class="font-semibold">总计</span>
                                 <span class="summary-price" id="purchase-summary-total">¥0.00</span>
                             </div>
-                            <button class="btn btn-primary btn-block mt-3" onclick="savePurchase()">
+                            <button class="btn btn-primary btn-block mt-3">
                                 💾 保存进货单
                             </button>
                         </div>
@@ -373,15 +374,15 @@
             <div class="card">
                 <div class="card-header">
                     <div class="card-title"><span class="icon">📋</span> 订单管理</div>
-                    <button class="btn btn-primary btn-sm" onclick="goPage('preorder')">➕ 新建预订单</button>
+                    <button class="btn btn-primary btn-sm">➕ 新建预订单</button>
                 </div>
                 <div class="card-body">
                     <div class="form-row mb-4" style="grid-template-columns: 1fr auto;">
                         <div class="input-with-icon" style="min-width: 0;">
                             <span class="icon">🔍</span>
-                            <input type="text" class="form-input" id="order-search" placeholder="搜索客户或商品" oninput="renderOrders()">
+                            <input type="text" class="form-input" id="order-search" placeholder="搜索客户或商品">
                         </div>
-                        <input type="date" class="form-input" id="order-date" onchange="renderOrders()" style="width: 140px; flex-shrink: 0;">
+                        <input type="date" class="form-input" id="order-date" style="width: 140px; flex-shrink: 0;">
                     </div>
                     <div class="text-sm text-gray mb-3" id="order-date-tip">默认展示当天订单</div>
 
@@ -397,12 +398,12 @@
             <div class="card">
                 <div class="card-header">
                     <div class="card-title"><span class="icon">👥</span> 客户管理</div>
-                    <button class="btn btn-primary btn-sm" onclick="openAddCustomerModal()">➕ 添加客户</button>
+                    <button class="btn btn-primary btn-sm">➕ 添加客户</button>
                 </div>
                 <div class="card-body">
                     <div class="input-with-icon mb-4">
                         <span class="icon">🔍</span>
-                        <input type="text" class="form-input" id="customer-search" placeholder="搜索客户" oninput="renderCustomers()">
+                        <input type="text" class="form-input" id="customer-search" placeholder="搜索客户">
                     </div>
 
                     <div id="customers-list">
@@ -414,7 +415,7 @@
 
         <!-- 客户订单详情 -->
         <section id="page-customer-orders" class="page-section">
-            <button class="back-btn" onclick="goPage('customers')">← 返回客户列表</button>
+            <button class="back-btn">← 返回客户列表</button>
             <div class="card">
                 <div class="card-header">
                     <div class="card-title"><span class="icon">👤</span> <span id="customer-orders-name">客户订单</span></div>
@@ -433,8 +434,8 @@
                     <div class="bottom-bar-price" id="selected-amount">¥0</div>
                 </div>
                 <div class="action-group">
-                    <button class="btn btn-yellow" id="btn-unified-bill" onclick="openUnifiedBillModal()">统一开单</button>
-                    <button class="btn btn-primary" id="btn-settle-selected" onclick="openSettleSelectedModal()">结算选中</button>
+                    <button class="btn btn-yellow" id="btn-unified-bill">统一开单</button>
+                    <button class="btn btn-primary" id="btn-settle-selected">结算选中</button>
                 </div>
             </div>
         </section>
@@ -444,7 +445,7 @@
             <div class="card">
                 <div class="card-header">
                     <div class="card-title"><span class="icon">📦</span> 商品管理</div>
-                    <button class="btn btn-primary btn-sm" onclick="openAddProductModal()">➕ 添加商品</button>
+                    <button class="btn btn-primary btn-sm">➕ 添加商品</button>
                 </div>
                 <div class="card-body">
                     <div id="products-list">
@@ -470,7 +471,7 @@
                         <div class="card-title"><span class="icon">⚙️</span> 设置</div>
                     </div>
                     <div class="card-body" style="padding-top: 8px; padding-bottom: 8px;">
-                        <div class="list-item" style="margin-bottom: 8px;" onclick="exportData()">
+                        <div class="list-item" style="margin-bottom: 8px;">
                             <div class="flex items-center gap-3">
                                 <span style="font-size: 22px;">📤</span>
                                 <span class="font-semibold">数据导出</span>
@@ -506,7 +507,7 @@
 
         <!-- 数据明细 -->
         <section id="page-stat-detail" class="page-section">
-            <button class="back-btn" onclick="goPage('home')">← 返回首页</button>
+            <button class="back-btn">← 返回首页</button>
             <div class="card">
                 <div class="card-header">
                     <div class="card-title"><span class="icon" id="stat-detail-icon">📊</span> <span id="stat-detail-title">数据明细</span></div>
@@ -526,7 +527,7 @@
         <div class="modal">
             <div class="modal-header">
                 <div class="modal-title" id="modal-title">标题</div>
-                <button class="modal-close" onclick="closeModal()">×</button>
+                <button class="modal-close">×</button>
             </div>
             <div class="modal-body" id="modal-body">
                 <!-- 动态内容 -->

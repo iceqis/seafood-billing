@@ -5,7 +5,6 @@ import { JSDOM } from 'jsdom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const indexHtml = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
-const appSource = readFileSync(new URL('../../assets/js/app.js', import.meta.url), 'utf8');
 const SESSION_KEY = 'seafood_billing_session';
 const originalGlobals = new Map();
 let activeDom;
@@ -331,19 +330,19 @@ describe('frontend shared-shop login flow', () => {
     const { document, dom } = await createApp(fetchMock, 'old-token');
     const { state } = await import('../../assets/js/state.js');
 
-    const navigation = dom.window.goPage('customers');
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    document.querySelector('.nav-btn[data-page="customers"]').click();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
     document.querySelector('#logout-button').click();
     resolveCustomers(await apiResponse({
       code: 0,
       message: 'success',
       data: [{ id: 'old-customer', name: '旧客户' }]
     }));
-    await navigation;
+    await Promise.resolve();
 
     expect(state.customers).toEqual([]);
     expect(state.orders).toEqual([]);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(document.querySelector('#toast').classList.contains('show')).toBe(false);
     expect(document.querySelector('#login-view').hidden).toBe(false);
   });
@@ -369,7 +368,7 @@ describe('frontend shared-shop login flow', () => {
     });
     const { document, dom } = await createApp(fetchMock, 'old-token');
 
-    const navigation = dom.window.goPage('customers');
+    document.querySelector('.nav-btn[data-page="customers"]').click();
     document.querySelector('#logout-button').click();
     document.querySelector('#login-password').value = 'shop-password';
     document.querySelector('#login-form').dispatchEvent(new dom.window.Event('submit', {
@@ -380,7 +379,7 @@ describe('frontend shared-shop login flow', () => {
     await vi.waitFor(() => expect(document.querySelector('#app-container').hidden).toBe(false));
 
     resolveOldRequest(await apiResponse({ code: 401, message: '旧会话已过期', data: null }, 401));
-    await navigation;
+    await Promise.resolve();
 
     expect(dom.window.localStorage.getItem(SESSION_KEY)).toBe('new-token');
     expect(document.querySelector('#login-view').hidden).toBe(true);
@@ -388,19 +387,9 @@ describe('frontend shared-shop login flow', () => {
     expect(document.querySelector('#login-message').textContent).toBe('');
   });
 
-  it('keeps all legacy inline handlers callable after moving to module scope', async () => {
+  it('uses delegated module events instead of inline handler globals', async () => {
     const { dom } = await createApp(vi.fn());
-    const handlerNames = new Set();
-    for (const source of [indexHtml, appSource]) {
-      for (const attribute of source.matchAll(/\bon[a-z]+\s*=\s*"([^"]*)"/gi)) {
-        for (const call of attribute[1].matchAll(/(?:^|[;\s])([A-Za-z_$][\w$]*)\s*\(/g)) {
-          handlerNames.add(call[1]);
-        }
-      }
-    }
-
-    expect(handlerNames.has('renderCustomers')).toBe(true);
-    expect(handlerNames.size).toBeGreaterThan(30);
-    for (const name of handlerNames) expect(dom.window[name], name).toBeTypeOf('function');
+    expect(indexHtml).not.toMatch(/\bon(?:click|input|change|submit)=/i);
+    expect(dom.window.goPage).toBeUndefined();
   });
 });
