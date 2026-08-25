@@ -16,6 +16,7 @@ function createClient(fetchImpl, options = {}) {
       getToken: options.getToken || (() => 'test-token'),
       onUnauthorized,
       timeoutMs: options.timeoutMs ?? 10,
+      getSessionVersion: options.getSessionVersion,
       fetchImpl
     }),
     onUnauthorized
@@ -48,9 +49,10 @@ describe('api client', () => {
 
   it('reports unauthorized responses exactly once', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ code: 401, message: '登录已过期', data: null }, 401));
-    const { client, onUnauthorized } = createClient(fetchMock);
+    const { client, onUnauthorized } = createClient(fetchMock, { getSessionVersion: () => 7 });
     await expect(client.get('/api/customers')).rejects.toThrow('登录已过期');
     expect(onUnauthorized).toHaveBeenCalledOnce();
+    expect(onUnauthorized).toHaveBeenCalledWith({ token: 'test-token', sessionVersion: 7 });
   });
 
   it('still calls unauthorized once when the 401 body is not JSON', async () => {
@@ -122,5 +124,53 @@ describe('api client', () => {
     await expect(client.get('/api/customers')).rejects.toThrow('请求失败');
     expect(clearSpy).toHaveBeenCalled();
     clearSpy.mockRestore();
+  });
+
+  it('silently rejects stale success and stale 401 responses without unauthorized cleanup', async () => {
+    let version = 1;
+    let resolveRequest;
+    const pending = new Promise((resolve) => { resolveRequest = resolve; });
+    const fetchMock = vi.fn(() => pending);
+    const onUnauthorized = vi.fn();
+    const { client } = createClient(fetchMock, {
+      getSessionVersion: () => version,
+      onUnauthorized,
+      timeoutMs: 1000
+    });
+
+    const staleSuccess = client.get('/api/customers');
+    version += 1;
+    resolveRequest(jsonResponse({ code: 0, message: 'success', data: [{ id: 'old' }] }));
+    await expect(staleSuccess).rejects.toMatchObject({ name: 'RequestCancelled' });
+    expect(onUnauthorized).not.toHaveBeenCalled();
+
+    let resolveUnauthorized;
+    const unauthorizedPending = new Promise((resolve) => { resolveUnauthorized = resolve; });
+    const secondFetch = vi.fn(() => unauthorizedPending);
+    const second = createClient(secondFetch, {
+      getSessionVersion: () => version,
+      onUnauthorized,
+      timeoutMs: 1000
+    }).client.get('/api/customers');
+    version += 1;
+    resolveUnauthorized(jsonResponse({ code: 401, message: '登录已过期', data: null }, 401));
+    await expect(second).rejects.toMatchObject({ name: 'RequestCancelled' });
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+
+  it('exposes cancelAll and distinguishes external cancellation from timeout', async () => {
+    const fetchMock = vi.fn((_url, options) => new Promise((_resolve, reject) => {
+      options.signal.addEventListener('abort', () => {
+        reject(new DOMException('cancelled', 'AbortError'));
+      }, { once: true });
+    }));
+    const { client } = createClient(fetchMock, { timeoutMs: 1000 });
+
+    expect(client.cancelAll).toBeTypeOf('function');
+    const request = client.get('/api/customers');
+    client.cancelAll();
+
+    await expect(request).rejects.toMatchObject({ name: 'RequestCancelled' });
+    await expect(request).rejects.not.toThrow('网络连接超时，请稍后重试');
   });
 });

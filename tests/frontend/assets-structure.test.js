@@ -16,6 +16,16 @@ describe('frontend extracted assets', () => {
     expect(html).not.toContain('<style>');
   });
 
+  it('loads one external ES module entry without inline business scripts or page modules', () => {
+    const html = read('index.html');
+    expect(html.match(/<script\b/g) || []).toHaveLength(1);
+    expect(html).toContain('<script type="module" src="./assets/js/app.js"></script>');
+    expect(html).not.toMatch(/<script(?:\s[^>]*)?>[\s\S]*?function\s+\w+/);
+    expect(() => read('assets/js/app.js')).not.toThrow();
+    expect(() => read('assets/js/auth.js')).not.toThrow();
+    expect(() => read('assets/js/pages/home.js')).toThrow();
+  });
+
   it('keeps key rules in their extracted layers and isolates media queries', () => {
     const base = read('assets/css/base.css');
     const components = read('assets/css/components.css');

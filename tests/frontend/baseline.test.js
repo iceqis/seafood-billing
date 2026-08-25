@@ -3,20 +3,15 @@
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { describe, expect, it } from 'vitest';
+import { hideLoading, showLoading } from '../../assets/js/utils.js';
 
 const indexHtml = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
-const loadingFunctions = ['showLoading', 'hideLoading']
-  .map((name) => indexHtml.match(new RegExp(`function ${name}\\([\\s\\S]*?\\n\\s{8}\\}`))?.[0])
-  .join('\n');
 
 function createLoadingHarness() {
   const dom = new JSDOM(indexHtml);
   const document = dom.window.document;
-  const functions = new Function(
-    'document',
-    `${loadingFunctions}; return { showLoading, hideLoading };`
-  )(document);
-  return { dom, document, ...functions };
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: document });
+  return { dom, document, showLoading, hideLoading };
 }
 
 describe('frontend production baseline', () => {
