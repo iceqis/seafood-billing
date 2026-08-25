@@ -1,0 +1,5 @@
+export const APP_CONFIG = Object.freeze({
+  apiBase: 'https://seafood-billing-api.iceqy0313.workers.dev',
+  version: '3.1.0',
+  requestTimeoutMs: 15000
+});
