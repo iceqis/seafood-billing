@@ -1007,9 +1007,47 @@
             font-size: 14px;
             font-weight: 600;
         }
+
+        .login-view {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            background: linear-gradient(145deg, #eff6ff, #f8fafc 55%, #ecfeff);
+        }
+        .login-view[hidden], #app-container[hidden] { display: none !important; }
+        .login-card {
+            width: min(100%, 400px);
+            background: #fff;
+            border-radius: 20px;
+            padding: 32px;
+            box-shadow: 0 20px 55px rgba(15, 23, 42, 0.12);
+        }
+        .login-title { margin: 12px 0 6px; font-size: 24px; text-align: center; }
+        .login-subtitle { margin: 0 0 24px; color: #64748b; text-align: center; }
+        .login-card label { display: block; margin-bottom: 8px; font-weight: 600; }
+        .login-card input { width: 100%; margin-bottom: 16px; }
+        .login-card .btn { width: 100%; justify-content: center; }
+        .login-message { min-height: 22px; margin-top: 14px; color: #dc2626; text-align: center; }
     </style>
 </head>
 <body>
+    <section class="login-view" id="login-view" aria-labelledby="login-title">
+        <div class="login-card">
+            <div class="logo-icon" style="margin: 0 auto;">🦐</div>
+            <h1 class="login-title" id="login-title">海鲜批发记账</h1>
+            <p class="login-subtitle">请输入店铺密码继续</p>
+            <form id="login-form">
+                <label for="login-password">店铺密码</label>
+                <input id="login-password" type="password" autocomplete="current-password" required>
+                <button class="btn btn-primary" id="login-submit" type="submit">登录</button>
+            </form>
+            <div class="login-message" id="login-message" role="alert" aria-live="polite"></div>
+        </div>
+    </section>
+
+    <div id="app-container" hidden>
     <!-- 顶部导航栏 -->
     <nav id="navbar">
         <div class="nav-container">
@@ -1526,11 +1564,13 @@
 
     <!-- 提示消息 -->
     <div class="toast" id="toast"></div>
+    </div>
 
     <script>
         // ==================== 配置区 ====================
         // 把你的 Cloudflare Worker 地址填在这里
         const API_BASE = 'https://seafood-billing-api.iceqy0313.workers.dev';
+        const SESSION_KEY = 'seafood_billing_session';
         // ================================================
 
         // 状态中文映射
@@ -1593,6 +1633,32 @@
             return API_BASE && !API_BASE.includes('你的-worker地址');
         }
 
+        function getSessionToken() {
+            return localStorage.getItem(SESSION_KEY) || '';
+        }
+
+        function saveSessionToken(token) {
+            localStorage.setItem(SESSION_KEY, token);
+        }
+
+        function clearSessionToken() {
+            localStorage.removeItem(SESSION_KEY);
+        }
+
+        function showLogin(message = '') {
+            clearSessionToken();
+            document.getElementById('app-container').hidden = true;
+            document.getElementById('login-view').hidden = false;
+            document.getElementById('login-message').textContent = message;
+            document.getElementById('login-password').value = '';
+        }
+
+        function showApplication() {
+            document.getElementById('login-view').hidden = true;
+            document.getElementById('app-container').hidden = false;
+            document.getElementById('login-message').textContent = '';
+        }
+
         // ==================== API 请求封装 ====================
 
         async function apiRequest(url, options = {}) {
@@ -1601,16 +1667,24 @@
                 throw new Error('请先配置 API_BASE');
             }
 
-            const defaultOptions = {
-                headers: {
-                    'Content-Type': 'application/json'
-                }
-            };
-
             try {
-                const res = await fetch(API_BASE + url, { ...defaultOptions, ...options });
-                const data = await res.json();
-                if (data.code !== 0) {
+                const headers = new Headers(options.headers || {});
+                if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+                const token = getSessionToken();
+                if (token) headers.set('Authorization', 'Bearer ' + token);
+                const res = await fetch(API_BASE + url, { ...options, headers });
+                let data = {};
+                try {
+                    data = await res.json();
+                } catch (error) {
+                    if (res.status !== 401) throw error;
+                }
+                if (res.status === 401) {
+                    hideLoading();
+                    showLogin('登录已过期，请重新登录');
+                    throw new Error('登录已过期，请重新登录');
+                }
+                if (!res.ok || data.code !== 0) {
                     throw new Error(data.message || '请求失败');
                 }
                 return data.data;
@@ -1642,6 +1716,37 @@
         function apiDelete(url) {
             return apiRequest(url, { method: 'DELETE' });
         }
+
+        async function submitLogin(event) {
+            event.preventDefault();
+            const passwordInput = document.getElementById('login-password');
+            const password = passwordInput.value;
+            passwordInput.value = '';
+            const button = document.getElementById('login-submit');
+            const message = document.getElementById('login-message');
+            button.disabled = true;
+            message.textContent = '';
+            try {
+                const response = await fetch(API_BASE + '/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password })
+                });
+                const body = await response.json();
+                if (!response.ok || body.code !== 0 || !body.data?.token) {
+                    throw new Error(body.message || '登录失败');
+                }
+                saveSessionToken(body.data.token);
+                showApplication();
+                await init();
+            } catch (error) {
+                if (!getSessionToken()) message.textContent = error.message || '登录失败，请重试';
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        document.getElementById('login-form').addEventListener('submit', submitLogin);
 
         // ==================== 数据加载 ====================
 
@@ -2987,7 +3092,12 @@
             }
         }
 
-        init();
+        if (getSessionToken()) {
+            showApplication();
+            init();
+        } else {
+            showLogin();
+        }
     </script>
 </body>
 </html>

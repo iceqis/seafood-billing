@@ -5,4 +5,8 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 ALLOWED_ORIGINS = "https://iceqis.github.io"
-APP_VERSION = "3.0.1"
+APP_VERSION = "3.1.0"
+
+[env.dev.vars]
+ALLOWED_ORIGINS = "http://localhost:4173"
+APP_VERSION = "3.1.0-dev"

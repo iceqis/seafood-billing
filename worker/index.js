@@ -4,6 +4,13 @@
 import { FeishuError, createFeishuClient } from './feishu-client.js';
 import { statusFromFeishu } from './field-mappers.js';
 import { corsHeaders, errorResponse, jsonResponse } from './response.js';
+import {
+  TOKEN_TTL_SECONDS,
+  issueToken,
+  readBearerToken,
+  verifyPassword,
+  verifyToken
+} from './auth.js';
 import { createCustomersService } from './services/customers.js';
 import { createOrdersService } from './services/orders.js';
 import { createProductsService } from './services/products.js';
@@ -22,6 +29,22 @@ const REQUIRED_ENV = Object.freeze([
   'TABLE_ORDERS',
   'TABLE_PURCHASES'
 ]);
+
+const REQUIRED_AUTH_ENV = Object.freeze([
+  'SHOP_PASSWORD_SALT',
+  'SHOP_PASSWORD_HASH',
+  'AUTH_SECRET'
+]);
+const MAX_LOGIN_BODY_BYTES = 4096;
+const MAX_PASSWORD_LENGTH = 256;
+
+const DATA_SOURCE_TABLES = Object.freeze({
+  customers: 'TABLE_CUSTOMERS',
+  suppliers: 'TABLE_SUPPLIERS',
+  products: 'TABLE_PRODUCTS',
+  orders: 'TABLE_ORDERS',
+  purchases: 'TABLE_PURCHASES'
+});
 
 function getToday() {
   return new Date().toISOString().split('T')[0];
@@ -56,12 +79,17 @@ function assertEnvironment(env) {
   }
 }
 
+function assertAuthEnvironment(env) {
+  for (const key of REQUIRED_AUTH_ENV) {
+    if (!env[key]) throw new ValidationError(`缺少环境变量: ${key}`, 500);
+  }
+}
+
 function methodNotAllowed() {
   return errorResponse('Method Not Allowed', 405);
 }
 
-function createServices(env) {
-  const feishu = createFeishuClient(env);
+function createServices(feishu, env) {
   return {
     customers: createCustomersService(feishu, env),
     suppliers: createSuppliersService(feishu, env),
@@ -70,6 +98,109 @@ function createServices(env) {
     purchases: createPurchasesService(feishu, env),
     statistics: createStatisticsService(feishu, env)
   };
+}
+
+async function readJsonBody(request) {
+  const contentLength = request.headers.get('Content-Length');
+  if (contentLength !== null && /^\d+$/.test(contentLength.trim())) {
+    const declaredBytes = Number(contentLength);
+    if (declaredBytes > MAX_LOGIN_BODY_BYTES) {
+      try {
+        await request.body?.cancel();
+      } catch {
+        // The size error remains the stable client-facing response.
+      }
+      throw new ValidationError('请求体过大', 413);
+    }
+  }
+
+  const reader = request.body?.getReader();
+  if (!reader) throw new ValidationError('请求体必须是有效JSON');
+  const chunks = [];
+  let totalBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      totalBytes += value.byteLength;
+      if (totalBytes > MAX_LOGIN_BODY_BYTES) {
+        try {
+          await reader.cancel();
+        } catch {
+          // The size error remains the stable client-facing response.
+        }
+        throw new ValidationError('请求体过大', 413);
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    if (error instanceof ValidationError) throw error;
+    throw new ValidationError('请求体必须是有效JSON');
+  } finally {
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } catch {
+    throw new ValidationError('请求体必须是有效JSON');
+  }
+}
+
+async function login(request, env) {
+  assertAuthEnvironment(env);
+  const body = await readJsonBody(request);
+  if (typeof body?.password !== 'string' || body.password.length === 0) {
+    throw new ValidationError('请输入店铺密码');
+  }
+  if (body.password.length > MAX_PASSWORD_LENGTH) {
+    throw new ValidationError('店铺密码长度不能超过256个字符');
+  }
+  const valid = await verifyPassword(
+    body.password,
+    env.SHOP_PASSWORD_SALT,
+    env.SHOP_PASSWORD_HASH
+  );
+  if (!valid) throw new ValidationError('店铺密码错误', 401);
+
+  const nowMs = Date.now();
+  const issuedAt = Math.floor(nowMs / 1000);
+  return successResponse({
+    token: await issueToken(env.AUTH_SECRET, nowMs),
+    expiresIn: TOKEN_TTL_SECONDS,
+    expiresAt: issuedAt + TOKEN_TTL_SECONDS
+  });
+}
+
+async function requireAuthentication(request, env) {
+  if (!env.AUTH_SECRET) throw new ValidationError('缺少环境变量: AUTH_SECRET', 500);
+  const token = readBearerToken(request);
+  if (!token) throw new ValidationError('请先登录', 401);
+  try {
+    return await verifyToken(token, env.AUTH_SECRET);
+  } catch (error) {
+    throw new ValidationError(error.message, 401);
+  }
+}
+
+async function checkDataSources(feishu, env) {
+  const availability = {};
+  for (const [name, envKey] of Object.entries(DATA_SOURCE_TABLES)) {
+    try {
+      await feishu.checkTable(env[envKey]);
+      availability[name] = true;
+    } catch (error) {
+      if (!(error instanceof FeishuError)) throw error;
+      availability[name] = false;
+    }
+  }
+  return availability;
 }
 
 async function translateLegacyOrderUpdate(orders, id, body) {
@@ -89,17 +220,9 @@ async function translateLegacyOrderUpdate(orders, id, body) {
   throw new ValidationError('不支持的订单更新操作');
 }
 
-async function routeRequest(request, env) {
+async function routeProtectedRequest(request, env) {
   const url = new URL(request.url);
   const { pathname: path } = url;
-
-  if (path === '/api/health') {
-    return jsonResponse({
-      code: 0,
-      message: 'ok',
-      data: { version: '3.0.1', service: 'seafood-billing-api' }
-    });
-  }
 
   if ((path === '/api/orders/bill' || path === '/api/orders/settle') && request.method !== 'POST') {
     return methodNotAllowed();
@@ -108,7 +231,12 @@ async function routeRequest(request, env) {
   if (explicitOrderMatch && request.method !== 'PUT') return methodNotAllowed();
 
   assertEnvironment(env);
-  const services = createServices(env);
+  const feishu = createFeishuClient(env);
+  if (path === '/api/health/data-source') {
+    if (request.method !== 'GET') return methodNotAllowed();
+    return successResponse(await checkDataSources(feishu, env));
+  }
+  const services = createServices(feishu, env);
 
   if (path === '/api/customers') {
     if (request.method === 'GET') return successResponse(await services.customers.list());
@@ -232,9 +360,32 @@ export default {
 
     let response;
     try {
-      response = request.method === 'OPTIONS'
-        ? new Response(null, { headers: cors })
-        : await routeRequest(request, env);
+      const origin = request.headers.get('Origin') ?? '';
+      const originAllowed = origin && parseAllowedOrigins(env.ALLOWED_ORIGINS).includes(origin);
+
+      if (request.method === 'OPTIONS') {
+        response = originAllowed
+          ? new Response(null, { headers: cors })
+          : errorResponse('来源不允许', 403);
+      } else if (origin && !originAllowed) {
+        response = errorResponse('来源不允许', 403);
+      } else if (url.pathname === '/api/health' && request.method === 'GET') {
+        response = jsonResponse({
+          code: 0,
+          message: 'ok',
+          data: {
+            version: env.APP_VERSION || '3.1.0',
+            service: 'seafood-billing-api'
+          }
+        });
+      } else if (url.pathname === '/api/auth/login' && request.method === 'POST') {
+        response = origin
+          ? await login(request, env)
+          : errorResponse('来源不允许', 403);
+      } else {
+        await requireAuthentication(request, env);
+        response = await routeProtectedRequest(request, env);
+      }
     } catch (error) {
       response = responseForError(error);
     }

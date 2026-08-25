@@ -1,5 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker from '../../worker/index.js';
+import { issueToken } from '../../worker/auth.js';
+
+const AUTH_SECRET = 'baseline-auth-secret-with-at-least-32-characters';
+let authorization;
 
 const configuredEnv = {
   FEISHU_APP_ID: 'app',
@@ -9,7 +13,8 @@ const configuredEnv = {
   TABLE_SUPPLIERS: 'suppliers',
   TABLE_PRODUCTS: 'products',
   TABLE_ORDERS: 'orders',
-  TABLE_PURCHASES: 'purchases'
+  TABLE_PURCHASES: 'purchases',
+  AUTH_SECRET
 };
 const corsEnv = {
   ...configuredEnv,
@@ -54,6 +59,16 @@ function mockOrderRead(currentStatus) {
     }));
 }
 
+function fetchAsUser(request, env) {
+  const headers = new Headers(request.headers);
+  headers.set('Authorization', authorization);
+  return worker.fetch(new Request(request, { headers }), env);
+}
+
+beforeAll(async () => {
+  authorization = `Bearer ${await issueToken(AUTH_SECRET)}`;
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -73,7 +88,7 @@ describe('worker production baseline', () => {
       new Error('Feishu must not be called for unsupported methods')
     );
 
-    const response = await worker.fetch(new Request(`https://example.test${path}`, {
+    const response = await fetchAsUser(new Request(`https://example.test${path}`, {
       method,
       headers: { Origin: 'https://allowed.example' }
     }), corsEnv);
@@ -115,7 +130,7 @@ describe('worker production baseline', () => {
       headers: { Origin: 'https://denied.example' }
     }), corsEnv);
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(403);
     expect(response.headers.get('Vary')).toBe('Origin');
     expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -137,7 +152,7 @@ describe('worker production baseline', () => {
     await expect(response.json()).resolves.toEqual({
       code: 0,
       message: 'ok',
-      data: { version: '3.0.1', service: 'seafood-billing-api' }
+      data: { version: '3.1.0', service: 'seafood-billing-api' }
     });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
@@ -160,7 +175,7 @@ describe('worker production baseline', () => {
         items: [{ record_id: 'rec1', fields: orderFields('未结算') }]
       }));
 
-    const response = await worker.fetch(
+    const response = await fetchAsUser(
       new Request('https://example.test/api/orders?status=unsettled'),
       configuredEnv
     );
@@ -183,7 +198,7 @@ describe('worker production baseline', () => {
         items: [{ record_id: 'rec1', fields: orderFields('待发货') }]
       }));
 
-    const response = await worker.fetch(new Request('https://example.test/api/orders', {
+    const response = await fetchAsUser(new Request('https://example.test/api/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -203,7 +218,7 @@ describe('worker production baseline', () => {
   it('updates a settled order using canonical comparisons and returns an English API status', async () => {
     const fetchSpy = mockOrderMutation('已结算', '未开单');
 
-    const response = await worker.fetch(new Request('https://example.test/api/orders/XSD20260823001', {
+    const response = await fetchAsUser(new Request('https://example.test/api/orders/XSD20260823001', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ actualWeight: 5.5, price: 40, status: 'pending_bill' })
@@ -218,7 +233,7 @@ describe('worker production baseline', () => {
   it('accepts a Chinese target status and applies canonical settled-order rules', async () => {
     const fetchSpy = mockOrderMutation('已结算', '未开单');
 
-    const response = await worker.fetch(new Request('https://example.test/api/orders/XSD20260823001', {
+    const response = await fetchAsUser(new Request('https://example.test/api/orders/XSD20260823001', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ actualWeight: 5.5, price: 40, status: '未开单' })
@@ -234,7 +249,7 @@ describe('worker production baseline', () => {
   it('rejects an invalid order transition without updating Feishu', async () => {
     const fetchSpy = mockOrderRead('已发货');
 
-    const response = await worker.fetch(new Request('https://example.test/api/orders/XSD20260823001/ship', {
+    const response = await fetchAsUser(new Request('https://example.test/api/orders/XSD20260823001/ship', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ actualWeight: 5.5 })
@@ -254,7 +269,7 @@ describe('worker production baseline', () => {
   ])('rejects invalid order update numbers without writing to Feishu: %s %o', async (operation, update, message) => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
-    const response = await worker.fetch(new Request(`https://example.test/api/orders/XSD20260823001/${operation}`, {
+    const response = await fetchAsUser(new Request(`https://example.test/api/orders/XSD20260823001/${operation}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(update)
@@ -268,7 +283,7 @@ describe('worker production baseline', () => {
   it('allows pending_ship to shipped and writes the Chinese status to Feishu', async () => {
     const fetchSpy = mockOrderMutation('待发货', '已发货');
 
-    const response = await worker.fetch(new Request('https://example.test/api/orders/XSD20260823001', {
+    const response = await fetchAsUser(new Request('https://example.test/api/orders/XSD20260823001', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ actualWeight: 5.5, status: 'shipped' })
@@ -284,7 +299,7 @@ describe('worker production baseline', () => {
   it('ships through the explicit route', async () => {
     const fetchSpy = mockOrderMutation('待发货', '已发货');
 
-    const response = await worker.fetch(new Request(
+    const response = await fetchAsUser(new Request(
       'https://example.test/api/orders/XSD20260823001/ship',
       {
         method: 'PUT',
@@ -303,7 +318,7 @@ describe('worker production baseline', () => {
   it('prices through the explicit route', async () => {
     const fetchSpy = mockOrderMutation('已发货', '未开单');
 
-    const response = await worker.fetch(new Request(
+    const response = await fetchAsUser(new Request(
       'https://example.test/api/orders/XSD20260823001/price',
       {
         method: 'PUT',
@@ -322,7 +337,7 @@ describe('worker production baseline', () => {
   it('rejects arbitrary legacy status updates without writing to Feishu', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
 
-    const response = await worker.fetch(new Request('https://example.test/api/orders/XSD20260823001', {
+    const response = await fetchAsUser(new Request('https://example.test/api/orders/XSD20260823001', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'settled' })
@@ -337,7 +352,7 @@ describe('worker production baseline', () => {
       new Response('bad gateway', { status: 502 })
     );
 
-    const response = await worker.fetch(new Request('https://example.test/api/orders'), configuredEnv);
+    const response = await fetchAsUser(new Request('https://example.test/api/orders'), configuredEnv);
 
     expect(response.status).toBe(502);
     await expect(response.json()).resolves.toMatchObject({ code: 502 });
@@ -349,7 +364,7 @@ describe('worker production baseline', () => {
       new TypeError('connection failed with secret-token')
     );
 
-    const response = await worker.fetch(new Request('https://example.test/api/orders', {
+    const response = await fetchAsUser(new Request('https://example.test/api/orders', {
       headers: { Origin: 'https://allowed.example' }
     }), corsEnv);
     const body = await response.json();
@@ -372,7 +387,7 @@ describe('worker production baseline', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
       .mockImplementationOnce(() => feishuResponse({ tenant_access_token: 'tenant-token' }));
 
-    const response = await worker.fetch(new Request('https://example.test/api/orders', {
+    const response = await fetchAsUser(new Request('https://example.test/api/orders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(order)
@@ -392,7 +407,7 @@ describe('worker production baseline', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
       .mockImplementationOnce(() => feishuResponse({ tenant_access_token: 'tenant-token' }));
 
-    const response = await worker.fetch(new Request('https://example.test/api/purchases', {
+    const response = await fetchAsUser(new Request('https://example.test/api/purchases', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(purchase)
@@ -414,7 +429,7 @@ describe('worker production baseline', () => {
   ) => {
     const fetchSpy = mockOrderMutation(currentStatus, updatedStatus);
 
-    const response = await worker.fetch(new Request(`https://example.test${path}`, {
+    const response = await fetchAsUser(new Request(`https://example.test${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -457,7 +472,7 @@ describe('worker production baseline', () => {
         record: { record_id: 'rec3', fields: orderFields(updatedStatus, { 订单编号: ids[2] }) }
       }));
 
-    const response = await worker.fetch(new Request(`https://example.test${path}`, {
+    const response = await fetchAsUser(new Request(`https://example.test${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ids, ...(path.endsWith('/bill') ? { customer: '测试客户' } : {}) })

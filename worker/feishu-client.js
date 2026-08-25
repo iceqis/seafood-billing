@@ -100,6 +100,17 @@ export function createFeishuClient(env, fetchImpl = fetch) {
     return items;
   }
 
+  async function checkTable(tableId) {
+    const url = new URL(recordsUrl(tableId));
+    url.searchParams.set('page_size', '1');
+    const response = await withFeishuError('读取飞书数据失败', async () => fetchImpl(url, {
+      headers: { Authorization: `Bearer ${await getTenantToken()}` }
+    }));
+    const body = await readBody(response, '读取飞书数据失败');
+    if (body.code !== 0) throw new FeishuError('读取飞书数据失败');
+    return true;
+  }
+
   async function requestRecord(method, tableId, recordId = '', fields) {
     const response = await withFeishuError('写入飞书数据失败', async () => fetchImpl(recordsUrl(tableId, recordId), {
       method,
@@ -118,6 +129,7 @@ export function createFeishuClient(env, fetchImpl = fetch) {
   return {
     getTenantToken,
     listAllRecords,
+    checkTable,
     createRecord: (tableId, fields) => requestRecord('POST', tableId, '', fields),
     updateRecord: (tableId, recordId, fields) => requestRecord('PUT', tableId, recordId, fields),
     deleteRecord: (tableId, recordId) => requestRecord('DELETE', tableId, recordId)
