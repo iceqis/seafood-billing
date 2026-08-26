@@ -38,8 +38,8 @@ const deps = { api, state, today: () => getLocalDate(), version: APP_CONFIG.vers
 pages = { home: createHomePage(deps), preorder: createPreorderPage(deps), orders: createOrdersPage(deps), customers: createCustomersPage(deps), purchase: createPurchasesPage(deps), products: createProductsPage(deps), me: createProfilePage(deps) };
 
 async function performLogin() {
-  const input = document.getElementById('login-password'); const button = document.getElementById('login-submit'); const password = input.value; input.value = ''; button.disabled = true; setText(document.getElementById('login-message'), ''); let saved = false;
-  try { const token = await login(apiBase, password); activateSession(token); saved = true; showApplication(); await pages.home.enter(); } catch (error) { if (!saved) setText(document.getElementById('login-message'), error.message || '登录失败，请重试'); } finally { button.disabled = false; loginInFlight = null; }
+  const input = document.getElementById('login-password'); const button = document.getElementById('login-submit'); const password = input.value; input.value = ''; button.disabled = true; setText(button, '正在安全验证…'); setText(document.getElementById('login-message'), ''); let saved = false;
+  try { const token = await login(apiBase, password); activateSession(token); saved = true; showApplication(); await pages.home.enter(); } catch (error) { if (!saved) setText(document.getElementById('login-message'), error.message || '登录失败，请重试'); } finally { button.disabled = false; setText(button, '登录'); loginInFlight = null; }
 }
 function bindShell() {
   document.getElementById('login-form').addEventListener('submit', (event) => { event.preventDefault(); if (!loginInFlight) loginInFlight = performLogin(); });

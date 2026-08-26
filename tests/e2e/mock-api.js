@@ -1,5 +1,14 @@
+import { createLoginProof } from '../../assets/js/auth-proof.js';
+
 const TOKEN = 'e2e-signed-token';
 const GOOD_PASSWORD = 'correct-shop-password';
+const LOGIN_CHALLENGE = {
+  challengeToken: 'cGF5bG9hZA.c2lnbmF0dXJl',
+  salt: 'MDEyMzQ1Njc4OWFiY2RlZg==',
+  iterations: 210000,
+  hash: 'SHA-256',
+  expiresAt: 2000000000
+};
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -23,6 +32,9 @@ async function requestJson(request) {
 }
 
 export async function installMockApi(page, seed = {}) {
+  const expectedProof = await createLoginProof(GOOD_PASSWORD, LOGIN_CHALLENGE, {
+    nowMs: Date.now()
+  });
   const state = {
     customers: clone(seed.customers || [{ name: '海鲜酒楼', phone: '13800000000', settlement: '现结', remark: '' }]),
     suppliers: clone(seed.suppliers || [{ name: '渔港供应商', phone: '13900000000', remark: '' }]),
@@ -64,14 +76,22 @@ export async function installMockApi(page, seed = {}) {
     const url = new URL(request.url());
     const path = url.pathname;
     const method = request.method();
-    const entry = { method, path, search: url.search, authorization: request.headers().authorization || '', handled: false, resolution: 'pending' };
+    const requestBody = ['POST', 'PUT', 'PATCH'].includes(method) ? await requestJson(request) : null;
+    const entry = { method, path, search: url.search, authorization: request.headers().authorization || '', body: requestBody, handled: false, resolution: 'pending' };
     requests.push(entry);
     requestEntries.set(request, entry);
 
+    if (path === '/api/auth/challenge' && method === 'GET') {
+      entry.handled = true;
+      return ok(route, LOGIN_CHALLENGE);
+    }
+
     if (path === '/api/auth/login' && method === 'POST') {
       entry.handled = true;
-      const body = await requestJson(request);
-      if (body.password !== GOOD_PASSWORD) return fail(route, 401, '店铺密码错误');
+      if (requestBody.challengeToken !== LOGIN_CHALLENGE.challengeToken
+        || requestBody.proof !== expectedProof) {
+        return fail(route, 401, '店铺密码错误');
+      }
       return ok(route, { token: TOKEN, expiresIn: 2592000 });
     }
 

@@ -743,7 +743,7 @@ git commit -m "feat: use challenge proof login requests"
 - Modify: `tests/e2e/order-lifecycle.spec.js`
 - Modify: `tests/e2e/responsive.spec.js`
 
-- [ ] **Step 1: Write failing page busy-state assertions**
+- [x] **Step 1: Write failing page busy-state assertions**
 
 In the existing delayed-login test, add:
 
@@ -760,13 +760,13 @@ expect(document.querySelector('#login-submit').disabled).toBe(false);
 expect(document.querySelector('#login-submit').textContent).toBe('登录');
 ```
 
-- [ ] **Step 2: Run `auth-flow.test.js` and verify RED**
+- [x] **Step 2: Run `auth-flow.test.js` and verify RED**
 
 Run: `npx vitest run --config vitest.config.js tests/frontend/auth-flow.test.js`
 
 Expected: FAIL because the button text remains “登录” and mocks do not provide challenges.
 
-- [ ] **Step 3: Add deterministic busy-state restoration**
+- [x] **Step 3: Add deterministic busy-state restoration**
 
 In `performLogin`, save and restore the fixed label:
 
@@ -790,7 +790,7 @@ try {
 }
 ```
 
-- [ ] **Step 4: Update frontend flow mocks to the two-request protocol**
+- [x] **Step 4: Update frontend flow mocks to the two-request protocol**
 
 Add a shared valid challenge constant and route-aware mock helper at the top of `auth-flow.test.js`:
 
@@ -810,7 +810,7 @@ function challengeResponse() {
 
 For each login-flow mock, return `challengeResponse()` when the URL ends in `/api/auth/challenge`, return the intended token/error for `/api/auth/login`, and retain business responses for other paths. Update call-count assertions to count routes by URL rather than raw total calls.
 
-- [ ] **Step 5: Update the Playwright mock to verify real proofs**
+- [x] **Step 5: Update the Playwright mock to verify real proofs**
 
 In `tests/e2e/mock-api.js`, import `createLoginProof`, return a fixed challenge for GET, and compute the expected proof once per installed mock:
 
@@ -847,7 +847,7 @@ if (path === '/api/auth/login' && method === 'POST') {
 
 Update E2E request assertions to exempt both `/api/auth/challenge` and `/api/auth/login` from Bearer checks while still asserting no request body contains either test password.
 
-- [ ] **Step 6: Run page and E2E tests, then commit**
+- [x] **Step 6: Run page and E2E tests, then commit**
 
 Run: `npx vitest run --config vitest.config.js tests/frontend/auth-flow.test.js`
 

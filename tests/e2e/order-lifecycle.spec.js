@@ -59,7 +59,9 @@ test('completes the five-state order lifecycle without production requests', asy
   await expect(page.locator('#app-container')).toBeHidden();
 
   expect(mock.transitions).toEqual(['pending_ship', 'shipped', 'pending_bill', 'unsettled', 'settled']);
-  expect(mock.requests.filter((request) => request.path !== '/api/auth/login' && request.path !== '/api/health').every((request) => request.authorization === `Bearer ${mock.token}`)).toBe(true);
+  expect(mock.requests.filter((request) => !['/api/auth/challenge', '/api/auth/login', '/api/health'].includes(request.path)).every((request) => request.authorization === `Bearer ${mock.token}`)).toBe(true);
+  expect(JSON.stringify(mock.requests.map((request) => request.body))).not.toContain('wrong-password');
+  expect(JSON.stringify(mock.requests.map((request) => request.body))).not.toContain('correct-shop-password');
   expect(mock.requests.some((request) => request.method === 'PUT' && request.path.endsWith('/ship'))).toBe(true);
   expect(mock.requests.some((request) => request.method === 'PUT' && request.path.endsWith('/price'))).toBe(true);
   expect(mock.requests.some((request) => request.method === 'POST' && request.path === '/api/orders/bill')).toBe(true);

@@ -87,5 +87,6 @@ test('keeps primary actions usable, responsive, and accessibly labelled', async 
   await expectActionable(page.getByRole('button', { name: '退出登录' }));
   await expectNoHorizontalOverflow(page);
 
+  expect(JSON.stringify(mock.requests.map((request) => request.body))).not.toContain('correct-shop-password');
   expectNoProductionForward(expect, mock);
 });

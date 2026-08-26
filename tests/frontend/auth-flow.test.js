@@ -9,11 +9,28 @@ const SESSION_KEY = 'seafood_billing_session';
 const originalGlobals = new Map();
 let activeDom;
 
+const TEST_CHALLENGE = {
+  challengeToken: 'cGF5bG9hZA.c2lnbmF0dXJl',
+  salt: 'MDEyMzQ1Njc4OWFiY2RlZg==',
+  iterations: 210000,
+  hash: 'SHA-256',
+  expiresAt: 2000000000
+};
+
 function apiResponse(data, status = 200) {
   return Promise.resolve(new Response(JSON.stringify(data), {
     status,
     headers: { 'Content-Type': 'application/json' }
   }));
+}
+
+function withAuthChallenge(fetchMock) {
+  return vi.fn((url, init) => {
+    if (url.endsWith('/api/auth/challenge')) {
+      return apiResponse({ code: 0, message: 'success', data: TEST_CHALLENGE });
+    }
+    return fetchMock(url, init);
+  });
 }
 
 function installGlobal(name, value) {
@@ -40,12 +57,13 @@ async function createApp(fetchMock, sessionToken = '', seedState, options = {}) 
   installGlobal('document', dom.window.document);
   if (options.storageDenied) installDeniedStorage();
   else installGlobal('localStorage', dom.window.localStorage);
-  installGlobal('fetch', fetchMock);
+  const networkFetch = withAuthChallenge(fetchMock);
+  installGlobal('fetch', networkFetch);
   vi.resetModules();
   if (seedState) seedState((await import('../../assets/js/state.js')).state);
   const app = await import('../../assets/js/app.js');
   if (options.awaitReady !== false) await app.appReady;
-  return { app, dom, document: dom.window.document };
+  return { app, dom, document: dom.window.document, networkFetch };
 }
 
 afterEach(() => {
@@ -94,7 +112,7 @@ describe('frontend shared-shop login flow', () => {
         message: 'success',
         data: { todaySales: 0, todayDealCount: 0, todayPurchase: 0, monthSales: 0 }
       }));
-    const { document, dom } = await createApp(fetchMock);
+    const { document, dom, networkFetch } = await createApp(fetchMock);
 
     document.querySelector('#login-password').value = 'shop-password';
     document.querySelector('#login-form').dispatchEvent(new dom.window.Event('submit', {
@@ -102,7 +120,10 @@ describe('frontend shared-shop login flow', () => {
       cancelable: true
     }));
     expect(document.querySelector('#login-password').value).toBe('');
+    expect(document.querySelector('#login-submit').disabled).toBe(true);
+    expect(document.querySelector('#login-submit').textContent).toBe('正在安全验证…');
     expect(JSON.stringify(dom.window.localStorage)).not.toContain('shop-password');
+    expect(JSON.stringify(networkFetch.mock.calls)).not.toContain('shop-password');
 
     releaseLogin(await apiResponse({
       code: 0,
@@ -111,6 +132,8 @@ describe('frontend shared-shop login flow', () => {
     }));
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 
+    expect(document.querySelector('#login-submit').disabled).toBe(false);
+    expect(document.querySelector('#login-submit').textContent).toBe('登录');
     expect(dom.window.localStorage.length).toBe(1);
     expect(dom.window.localStorage.getItem(SESSION_KEY)).toBe('fresh-token');
     expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe('Bearer fresh-token');
@@ -151,7 +174,7 @@ describe('frontend shared-shop login flow', () => {
     document.querySelector('#login-password').value = 'shop-password';
     submit();
     submit();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     resolveLogin(await apiResponse({
       code: 0,
       message: 'success',
@@ -189,7 +212,7 @@ describe('frontend shared-shop login flow', () => {
     document.querySelector('#login-password').value = 'shop-password';
     submit();
     submit();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
     resolveFirstLogin(await apiResponse({ code: 401, message: '店铺密码错误', data: null }, 401));
     await vi.waitFor(() => expect(document.querySelector('#login-submit').disabled).toBe(false));
