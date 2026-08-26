@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createAuthStore, login } from '../../assets/js/auth.js';
+import { ChallengeExpiredError } from '../../assets/js/auth-proof.js';
 
 const SESSION_KEY = 'seafood_billing_session';
 
@@ -47,41 +48,151 @@ describe('auth store', () => {
   });
 });
 
-describe('login request', () => {
-  it('posts the password and returns only the signed token', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      code: 0,
-      message: 'success',
-      data: { token: 'signed-token', expiresIn: 2592000 }
-    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+function apiResponse(body, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' }
+  });
+}
 
-    await expect(login('https://api.test', 'shop-password', fetchMock)).resolves.toBe('signed-token');
-    expect(fetchMock).toHaveBeenCalledWith('https://api.test/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: 'shop-password' })
+function challengeResponse(token = 'payload.signature') {
+  return apiResponse({
+    code: 0,
+    message: 'success',
+    data: {
+      challengeToken: token,
+      salt: 'MDEyMzQ1Njc4OWFiY2RlZg==',
+      iterations: 210000,
+      hash: 'SHA-256',
+      expiresAt: 2000000000
+    }
+  });
+}
+
+function loginResponse(token = 'signed-token') {
+  return apiResponse({
+    code: 0,
+    message: 'success',
+    data: { token, expiresIn: 2592000 }
+  });
+}
+
+describe('login request', () => {
+  it('gets a challenge and posts only the generated proof', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(challengeResponse())
+      .mockResolvedValueOnce(loginResponse());
+    const proofFactory = vi.fn().mockResolvedValue('proof-value');
+
+    await expect(login('https://api.test', 'shop-password', fetchMock, proofFactory))
+      .resolves.toBe('signed-token');
+    expect(fetchMock.mock.calls[0]).toEqual([
+      'https://api.test/api/auth/challenge',
+      { method: 'GET', headers: { Accept: 'application/json' } }
+    ]);
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body)).toEqual({
+      challengeToken: 'payload.signature',
+      proof: 'proof-value'
     });
+    expect(JSON.stringify(fetchMock.mock.calls)).not.toContain('shop-password');
+    expect(proofFactory).toHaveBeenCalledWith('shop-password', expect.objectContaining({
+      challengeToken: 'payload.signature'
+    }));
   });
 
-  it('uses stable errors for rejected, malformed, and non-JSON responses', async () => {
-    const rejected = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      code: 401,
-      message: '店铺密码错误',
-      data: null
-    }), { status: 401, headers: { 'Content-Type': 'application/json' } }));
-    await expect(login('https://api.test', 'wrong', rejected)).rejects.toThrow('店铺密码错误');
+  it('retries exactly once after the Worker reports an expired challenge', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(challengeResponse('first.signature'))
+      .mockResolvedValueOnce(apiResponse({
+        code: 401,
+        message: '登录请求已过期，请重试',
+        data: null
+      }, 401))
+      .mockResolvedValueOnce(challengeResponse('second.signature'))
+      .mockResolvedValueOnce(loginResponse('retry-token'));
+    const proofFactory = vi.fn()
+      .mockResolvedValueOnce('first-proof')
+      .mockResolvedValueOnce('second-proof');
 
-    const missingToken = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    await expect(login('https://api.test', 'shop-password', fetchMock, proofFactory))
+      .resolves.toBe('retry-token');
+    expect(fetchMock.mock.calls.filter(([url]) => url.endsWith('/api/auth/challenge'))).toHaveLength(2);
+    expect(fetchMock.mock.calls.filter(([url]) => url.endsWith('/api/auth/login'))).toHaveLength(2);
+  });
+
+  it('gets one fresh challenge when browser proof generation sees expiration', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(challengeResponse('first.signature'))
+      .mockResolvedValueOnce(challengeResponse('second.signature'))
+      .mockResolvedValueOnce(loginResponse('retry-token'));
+    const proofFactory = vi.fn()
+      .mockRejectedValueOnce(new ChallengeExpiredError('登录请求已过期，请重试'))
+      .mockResolvedValueOnce('second-proof');
+
+    await expect(login('https://api.test', 'shop-password', fetchMock, proofFactory))
+      .resolves.toBe('retry-token');
+    expect(fetchMock.mock.calls.filter(([url]) => url.endsWith('/api/auth/challenge'))).toHaveLength(2);
+    expect(fetchMock.mock.calls.filter(([url]) => url.endsWith('/api/auth/login'))).toHaveLength(1);
+  });
+
+  it('does not request a third challenge after two expirations', async () => {
+    const expired = () => apiResponse({
+      code: 401,
+      message: '登录请求已过期，请重试',
+      data: null
+    }, 401);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(challengeResponse('first.signature'))
+      .mockResolvedValueOnce(expired())
+      .mockResolvedValueOnce(challengeResponse('second.signature'))
+      .mockResolvedValueOnce(expired());
+
+    await expect(login(
+      'https://api.test',
+      'shop-password',
+      fetchMock,
+      vi.fn().mockResolvedValue('proof')
+    )).rejects.toThrow('登录请求已过期，请重试');
+    expect(fetchMock.mock.calls.filter(([url]) => url.endsWith('/api/auth/challenge'))).toHaveLength(2);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('uses stable errors for rejected, malformed, non-JSON, and network responses', async () => {
+    const rejected = vi.fn()
+      .mockResolvedValueOnce(challengeResponse())
+      .mockResolvedValueOnce(apiResponse({
+        code: 401,
+        message: '店铺密码错误',
+        data: null
+      }, 401));
+    await expect(login(
+      'https://api.test', 'wrong', rejected, vi.fn().mockResolvedValue('wrong-proof')
+    )).rejects.toThrow('店铺密码错误');
+
+    const missingToken = vi.fn()
+      .mockResolvedValueOnce(challengeResponse())
+      .mockResolvedValueOnce(apiResponse({
       code: 0,
       message: 'success',
       data: null
-    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
-    await expect(login('https://api.test', 'password', missingToken)).rejects.toThrow('登录失败');
+    }));
+    await expect(login(
+      'https://api.test', 'password', missingToken, vi.fn().mockResolvedValue('proof')
+    )).rejects.toThrow('登录失败');
 
     const nonJson = vi.fn().mockResolvedValue(new Response('<html>bad gateway</html>', { status: 502 }));
-    await expect(login('https://api.test', 'password', nonJson)).rejects.toThrow('登录失败');
+    await expect(login(
+      'https://api.test', 'password', nonJson, vi.fn().mockResolvedValue('proof')
+    )).rejects.toThrow('登录失败');
 
     const network = vi.fn().mockRejectedValue(new TypeError('socket secret'));
-    await expect(login('https://api.test', 'password', network)).rejects.toThrow('网络连接失败，请稍后重试');
+    await expect(login(
+      'https://api.test', 'password', network, vi.fn().mockResolvedValue('proof')
+    )).rejects.toThrow('网络连接失败，请稍后重试');
+
+    const aborted = vi.fn().mockRejectedValue(new DOMException('timeout', 'AbortError'));
+    await expect(login(
+      'https://api.test', 'password', aborted, vi.fn().mockResolvedValue('proof')
+    )).rejects.toThrow('网络连接超时，请稍后重试');
   });
 });

@@ -641,7 +641,7 @@ git commit -m "feat: derive login proofs in the browser"
 - Modify: `assets/js/auth.js`
 - Modify: `tests/frontend/auth.test.js`
 
-- [ ] **Step 1: Replace the password-post test with a failing challenge/proof test**
+- [x] **Step 1: Replace the password-post test with a failing challenge/proof test**
 
 ```js
 it('gets a challenge and posts only the generated proof', async () => {
@@ -678,13 +678,13 @@ it('gets a challenge and posts only the generated proof', async () => {
 });
 ```
 
-- [ ] **Step 2: Run `auth.test.js` and verify RED**
+- [x] **Step 2: Run `auth.test.js` and verify RED**
 
 Run: `npx vitest run --config vitest.config.js tests/frontend/auth.test.js`
 
 Expected: FAIL because the current client performs one password POST.
 
-- [ ] **Step 3: Implement challenge GET, proof POST, and one expiration retry**
+- [x] **Step 3: Implement challenge GET, proof POST, and one expiration retry**
 
 Import `ChallengeExpiredError` and `createLoginProof`. Keep `createAuthStore` unchanged. Implement `login(apiBase, password, fetchImpl = fetch, proofFactory = createLoginProof)` as a two-attempt loop:
 
@@ -719,11 +719,11 @@ throw new Error('登录请求已过期，请重试');
 
 `requestEnvelope` must preserve current network/Abort/non-JSON messages, require an object API envelope, and return `{ expired: true }` only for HTTP 401 with the exact message “登录请求已过期，请重试”. All other non-OK responses throw the server message.
 
-- [ ] **Step 4: Add retry and stable-error tests**
+- [x] **Step 4: Add retry and stable-error tests**
 
 Add one test where the first POST returns the expiration message and the second challenge/login succeeds; assert exactly two challenge GETs and two login POSTs. Add one test where both attempts expire and assert no third challenge. Retain 401, missing token, non-JSON, and network tests with challenge responses included before each login response.
 
-- [ ] **Step 5: Run focused tests and commit**
+- [x] **Step 5: Run focused tests and commit**
 
 Run: `npx vitest run --config vitest.config.js tests/frontend/auth-proof.test.js tests/frontend/auth.test.js`
 
