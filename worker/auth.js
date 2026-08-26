@@ -56,23 +56,6 @@ function hasValidPayloadShape(value) {
     && value.exp > value.iat;
 }
 
-export async function verifyPassword(password, saltBase64, expectedHashBase64) {
-  const passwordKey = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(password),
-    'PBKDF2',
-    false,
-    ['deriveBits']
-  );
-  const derived = new Uint8Array(await crypto.subtle.deriveBits({
-    name: 'PBKDF2',
-    salt: decodeBase64(saltBase64),
-    iterations: 210000,
-    hash: 'SHA-256'
-  }, passwordKey, 256));
-  return timingSafeEqual(derived, decodeBase64(expectedHashBase64));
-}
-
 export async function issueToken(secret, nowMs = Date.now(), ttlSeconds = TOKEN_TTL_SECONDS) {
   const issuedAt = Math.floor(nowMs / 1000);
   const payload = encodeBase64Url(encoder.encode(JSON.stringify({

@@ -3,7 +3,6 @@ import {
   TOKEN_TTL_SECONDS,
   issueToken,
   readBearerToken,
-  verifyPassword,
   verifyToken
 } from '../../worker/auth.js';
 
@@ -29,18 +28,6 @@ function decodeBase64Url(value) {
   return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }
 
-async function passwordHash(password, saltBase64) {
-  const key = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
-  const salt = Uint8Array.from(atob(saltBase64), (character) => character.charCodeAt(0));
-  const bits = await crypto.subtle.deriveBits({
-    name: 'PBKDF2',
-    salt,
-    iterations: 210000,
-    hash: 'SHA-256'
-  }, key, 256);
-  return encodeBase64(new Uint8Array(bits));
-}
-
 async function signedToken(payload, secret) {
   const encodedPayload = encodeBase64Url(encoder.encode(JSON.stringify(payload)));
   const key = await crypto.subtle.importKey(
@@ -55,14 +42,6 @@ async function signedToken(payload, secret) {
 }
 
 describe('shared shop authentication', () => {
-  it('verifies the configured PBKDF2-SHA-256 password hash and rejects a wrong password', async () => {
-    const salt = encodeBase64(encoder.encode('seafood-test-salt'));
-    const expectedHash = await passwordHash('correct horse', salt);
-
-    await expect(verifyPassword('correct horse', salt, expectedHash)).resolves.toBe(true);
-    await expect(verifyPassword('wrong password', salt, expectedHash)).resolves.toBe(false);
-  });
-
   it('issues a 30-day HMAC token with the documented payload structure', async () => {
     const nowMs = 1_800_000;
     const token = await issueToken('test-secret', nowMs);

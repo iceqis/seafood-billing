@@ -22,6 +22,36 @@ async function passwordHash(password, saltBase64) {
   return encodeBase64(new Uint8Array(bits));
 }
 
+function encodeBase64Url(bytes) {
+  let binary = '';
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+}
+
+async function loginProof(password) {
+  const challengeResponse = await worker.fetch(request('/api/auth/challenge'), env);
+  const challenge = (await challengeResponse.json()).data;
+  const passwordKey = await crypto.subtle.importKey(
+    'raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']
+  );
+  const hashBytes = new Uint8Array(await crypto.subtle.deriveBits({
+    name: 'PBKDF2',
+    salt: Uint8Array.from(atob(challenge.salt), (character) => character.charCodeAt(0)),
+    iterations: challenge.iterations,
+    hash: challenge.hash
+  }, passwordKey, 256));
+  const proofKey = await crypto.subtle.importKey(
+    'raw', hashBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
+  );
+  const proof = new Uint8Array(await crypto.subtle.sign(
+    'HMAC', proofKey, encoder.encode(challenge.challengeToken)
+  ));
+  return {
+    challengeToken: challenge.challengeToken,
+    proof: encodeBase64Url(proof)
+  };
+}
+
 const env = {
   FEISHU_APP_ID: 'app',
   FEISHU_APP_SECRET: 'secret',
@@ -86,14 +116,30 @@ describe('authenticated Worker router', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('rejects login without an Origin and malformed login requests without leaking secrets', async () => {
+  it('issues a public challenge only for an allowed Origin', async () => {
+    const allowed = await worker.fetch(request('/api/auth/challenge'), env);
+    const noOrigin = await worker.fetch(request('/api/auth/challenge', { withOrigin: false }), env);
+
+    expect(allowed.status).toBe(200);
+    await expect(allowed.json()).resolves.toMatchObject({
+      code: 0,
+      data: {
+        salt: env.SHOP_PASSWORD_SALT,
+        iterations: 210000,
+        hash: 'SHA-256'
+      }
+    });
+    expect(noOrigin.status).toBe(403);
+  });
+
+  it('rejects login without an Origin and malformed proof requests without leaking secrets', async () => {
     const noOrigin = await worker.fetch(request('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: SHOP_PASSWORD }),
+      body: JSON.stringify({ challengeToken: 'payload.signature', proof: 'proof' }),
       withOrigin: false
     }), env);
-    const missingPassword = await worker.fetch(request('/api/auth/login', {
+    const missingProof = await worker.fetch(request('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({})
@@ -105,24 +151,30 @@ describe('authenticated Worker router', () => {
     }), env);
 
     expect(noOrigin.status).toBe(403);
-    expect(missingPassword.status).toBe(400);
+    expect(missingProof.status).toBe(400);
     expect(malformedJson.status).toBe(400);
     await expect(malformedJson.json()).resolves.toMatchObject({
       code: 400,
       message: '请求体必须是有效JSON'
     });
-    const body = await missingPassword.text();
+    const body = await missingProof.text();
     expect(body).not.toContain(env.SHOP_PASSWORD_HASH);
     expect(body).not.toContain(AUTH_SECRET);
   });
 
-  it('logs in with the shared password and returns only token expiry data', async () => {
+  it('logs in with a challenge proof and rejects a legacy raw password', async () => {
+    const proofBody = await loginProof(SHOP_PASSWORD);
     const response = await worker.fetch(request('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(proofBody)
+    }), env);
+    const body = await response.json();
+    const legacy = await worker.fetch(request('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ password: SHOP_PASSWORD })
     }), env);
-    const body = await response.json();
 
     expect(response.status).toBe(200);
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe(ALLOWED_ORIGIN);
@@ -134,22 +186,28 @@ describe('authenticated Worker router', () => {
     expect(JSON.stringify(body)).not.toContain(SHOP_PASSWORD);
     expect(JSON.stringify(body)).not.toContain(env.SHOP_PASSWORD_HASH);
     expect(JSON.stringify(body)).not.toContain(AUTH_SECRET);
+    expect(legacy.status).toBe(400);
+    await expect(legacy.json()).resolves.toMatchObject({
+      code: 400,
+      message: '登录协议已更新，请刷新页面'
+    });
   });
 
-  it('returns 401 for an incorrect password', async () => {
+  it('returns 401 for an incorrect password proof', async () => {
+    const proofBody = await loginProof('wrong');
     const response = await worker.fetch(request('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: 'wrong' })
+      body: JSON.stringify(proofBody)
     }), env);
 
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toMatchObject({ code: 401, message: '店铺密码错误' });
   });
 
-  it('returns 429 before reading or hashing a rate-limited login', async () => {
+  it('returns 429 before reading or signing a rate-limited login', async () => {
     env.LOGIN_RATE_LIMITER.limit.mockResolvedValue({ success: false });
-    const deriveSpy = vi.spyOn(crypto.subtle, 'deriveBits');
+    const signSpy = vi.spyOn(crypto.subtle, 'sign');
 
     const response = await worker.fetch(request('/api/auth/login', {
       method: 'POST',
@@ -157,7 +215,7 @@ describe('authenticated Worker router', () => {
         'Content-Type': 'application/json',
         'CF-Connecting-IP': '203.0.113.20'
       },
-      body: JSON.stringify({ password: SHOP_PASSWORD })
+      body: JSON.stringify({ challengeToken: 'payload.signature', proof: 'proof' })
     }), env);
 
     expect(response.status).toBe(429);
@@ -167,33 +225,33 @@ describe('authenticated Worker router', () => {
       message: '登录尝试过于频繁，请稍后再试'
     });
     expect(env.LOGIN_RATE_LIMITER.limit).toHaveBeenCalledWith({ key: '203.0.113.20' });
-    expect(deriveSpy).not.toHaveBeenCalled();
+    expect(signSpy).not.toHaveBeenCalled();
   });
 
-  it('rejects an oversized declared login body before reading or deriving a password', async () => {
+  it('rejects an oversized declared login body before reading or signing a proof', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    const deriveSpy = vi.spyOn(crypto.subtle, 'deriveBits');
+    const signSpy = vi.spyOn(crypto.subtle, 'sign');
     const response = await worker.fetch(request('/api/auth/login', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Content-Length': '4097'
       },
-      body: JSON.stringify({ password: SHOP_PASSWORD })
+      body: JSON.stringify({ challengeToken: 'payload.signature', proof: 'proof' })
     }), env);
 
     expect(response.status).toBe(413);
     await expect(response.json()).resolves.toMatchObject({ code: 413, message: '请求体过大' });
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe(ALLOWED_ORIGIN);
     expect(response.headers.get('X-Request-Id')).toBeTruthy();
-    expect(deriveSpy).not.toHaveBeenCalled();
+    expect(signSpy).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(JSON.stringify(vi.mocked(console.log).mock.calls)).not.toContain(SHOP_PASSWORD);
   });
 
   it('cancels and rejects an oversized streamed login body without Content-Length', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    const deriveSpy = vi.spyOn(crypto.subtle, 'deriveBits');
+    const signSpy = vi.spyOn(crypto.subtle, 'sign');
     const cancel = vi.fn();
     const body = new ReadableStream({
       start(controller) {
@@ -216,31 +274,32 @@ describe('authenticated Worker router', () => {
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe(ALLOWED_ORIGIN);
     expect(response.headers.get('X-Request-Id')).toBeTruthy();
     expect(cancel).toHaveBeenCalledOnce();
-    expect(deriveSpy).not.toHaveBeenCalled();
+    expect(signSpy).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(JSON.stringify(vi.mocked(console.log).mock.calls)).not.toContain(AUTH_SECRET);
   });
 
-  it('rejects an overlong password before PBKDF2 without leaking it', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    const deriveSpy = vi.spyOn(crypto.subtle, 'deriveBits');
-    const password = 'p'.repeat(257);
-    const response = await worker.fetch(request('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password })
-    }), env);
+  it.each([
+    ['SHOP_PASSWORD_SALT', 'not-base64'],
+    ['SHOP_PASSWORD_HASH', 'not-base64']
+  ])('returns a safe 503 for invalid %s without logging sensitive values', async (key, value) => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const invalidEnv = { ...env, [key]: value };
+    const response = await worker.fetch(request('/api/auth/challenge'), invalidEnv);
 
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({
-      code: 400,
-      message: '店铺密码长度不能超过256个字符'
+      code: 503,
+      message: '登录服务配置异常'
     });
-    expect(response.headers.get('Access-Control-Allow-Origin')).toBe(ALLOWED_ORIGIN);
-    expect(response.headers.get('X-Request-Id')).toBeTruthy();
-    expect(deriveSpy).not.toHaveBeenCalled();
-    expect(fetchSpy).not.toHaveBeenCalled();
-    expect(JSON.stringify(vi.mocked(console.log).mock.calls)).not.toContain(password);
+    expect(errorSpy).toHaveBeenCalledWith({ event: 'auth_configuration_invalid' });
+    const logs = JSON.stringify([
+      ...errorSpy.mock.calls,
+      ...vi.mocked(console.log).mock.calls
+    ]);
+    expect(logs).not.toContain(value);
+    expect(logs).not.toContain(env.SHOP_PASSWORD_HASH);
+    expect(logs).not.toContain(AUTH_SECRET);
   });
 
   it('returns stable 401 errors for missing, invalid, and expired Bearer tokens without Feishu', async () => {
@@ -318,10 +377,12 @@ describe('authenticated Worker router', () => {
   });
 
   it('logs only the five safe metadata fields for login and authorization failures', async () => {
+    const proofBody = await loginProof('wrong-secret-value');
+    vi.mocked(console.log).mockClear();
     await worker.fetch(request('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password: 'wrong-secret-value' })
+      body: JSON.stringify(proofBody)
     }), env);
 
     expect(console.log).toHaveBeenCalledTimes(1);

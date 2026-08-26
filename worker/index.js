@@ -8,9 +8,14 @@ import {
   TOKEN_TTL_SECONDS,
   issueToken,
   readBearerToken,
-  verifyPassword,
   verifyToken
 } from './auth.js';
+import {
+  AuthConfigurationError,
+  LoginChallengeError,
+  issueLoginChallenge,
+  verifyLoginProof
+} from './login-challenge.js';
 import { checkLoginRateLimit } from './login-rate-limit.js';
 import { createCustomersService } from './services/customers.js';
 import { createOrdersService } from './services/orders.js';
@@ -31,13 +36,7 @@ const REQUIRED_ENV = Object.freeze([
   'TABLE_PURCHASES'
 ]);
 
-const REQUIRED_AUTH_ENV = Object.freeze([
-  'SHOP_PASSWORD_SALT',
-  'SHOP_PASSWORD_HASH',
-  'AUTH_SECRET'
-]);
 const MAX_LOGIN_BODY_BYTES = 4096;
-const MAX_PASSWORD_LENGTH = 256;
 
 const DATA_SOURCE_TABLES = Object.freeze({
   customers: 'TABLE_CUSTOMERS',
@@ -76,12 +75,6 @@ function withHeaders(response, extraHeaders) {
 
 function assertEnvironment(env) {
   for (const key of REQUIRED_ENV) {
-    if (!env[key]) throw new ValidationError(`缺少环境变量: ${key}`, 500);
-  }
-}
-
-function assertAuthEnvironment(env) {
-  for (const key of REQUIRED_AUTH_ENV) {
     if (!env[key]) throw new ValidationError(`缺少环境变量: ${key}`, 500);
   }
 }
@@ -155,20 +148,19 @@ async function readJsonBody(request) {
 }
 
 async function login(request, env) {
-  assertAuthEnvironment(env);
   const body = await readJsonBody(request);
-  if (typeof body?.password !== 'string' || body.password.length === 0) {
-    throw new ValidationError('请输入店铺密码');
+  if (body && typeof body === 'object' && !Array.isArray(body) && 'password' in body) {
+    throw new ValidationError('登录协议已更新，请刷新页面');
   }
-  if (body.password.length > MAX_PASSWORD_LENGTH) {
-    throw new ValidationError('店铺密码长度不能超过256个字符');
+  if (!body || typeof body !== 'object' || Array.isArray(body)
+    || Object.keys(body).sort().join(',') !== 'challengeToken,proof'
+    || typeof body.challengeToken !== 'string'
+    || body.challengeToken.length === 0
+    || typeof body.proof !== 'string'
+    || body.proof.length === 0) {
+    throw new ValidationError('登录请求无效');
   }
-  const valid = await verifyPassword(
-    body.password,
-    env.SHOP_PASSWORD_SALT,
-    env.SHOP_PASSWORD_HASH
-  );
-  if (!valid) throw new ValidationError('店铺密码错误', 401);
+  await verifyLoginProof(body, env);
 
   const nowMs = Date.now();
   const issuedAt = Math.floor(nowMs / 1000);
@@ -354,6 +346,11 @@ async function routeProtectedRequest(request, env) {
 }
 
 function responseForError(error) {
+  if (error instanceof AuthConfigurationError) {
+    console.error({ event: 'auth_configuration_invalid' });
+    return errorResponse('登录服务配置异常', 503);
+  }
+  if (error instanceof LoginChallengeError) return errorResponse(error.message, error.status);
   if (error instanceof ValidationError) return errorResponse(error.message, error.status);
   if (error instanceof FeishuError) return errorResponse(error.message, 502);
   return errorResponse('服务器内部错误', 500);
@@ -389,6 +386,10 @@ export default {
             service: 'seafood-billing-api'
           }
         });
+      } else if (url.pathname === '/api/auth/challenge' && request.method === 'GET') {
+        response = origin
+          ? successResponse(await issueLoginChallenge(env))
+          : errorResponse('来源不允许', 403);
       } else if (url.pathname === '/api/auth/login' && request.method === 'POST') {
         response = origin
           ? await rateLimitedLogin(request, env)

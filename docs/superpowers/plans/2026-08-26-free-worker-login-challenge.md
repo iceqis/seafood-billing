@@ -403,7 +403,7 @@ git commit -m "feat: add stateless login challenge proof"
 - Modify: `tests/worker/auth.test.js`
 - Modify: `tests/worker/router-auth.test.js`
 
-- [ ] **Step 1: Remove the obsolete server-password unit test and write failing router tests**
+- [x] **Step 1: Remove the obsolete server-password unit test and write failing router tests**
 
 Delete the `verifyPassword` import/test from `tests/worker/auth.test.js`. In `tests/worker/router-auth.test.js`, add an independent `loginProof(password)` helper that first requests `/api/auth/challenge`, derives PBKDF2 in the test, signs the returned `challengeToken`, and returns `{ challengeToken, proof }`.
 
@@ -442,13 +442,13 @@ it('logs in with a challenge proof and never accepts a raw password', async () =
 });
 ```
 
-- [ ] **Step 2: Run router/auth tests and verify RED**
+- [x] **Step 2: Run router/auth tests and verify RED**
 
 Run: `npx vitest run --config vitest.worker.config.js tests/worker/auth.test.js tests/worker/router-auth.test.js`
 
 Expected: challenge route is protected as a business route and proof bodies are rejected.
 
-- [ ] **Step 3: Integrate the challenge route and proof login**
+- [x] **Step 3: Integrate the challenge route and proof login**
 
 In `worker/index.js`, import:
 
@@ -489,7 +489,7 @@ Add the allowed-origin challenge route before `POST /api/auth/login`:
 
 Remove `verifyPassword`, `MAX_PASSWORD_LENGTH`, `REQUIRED_AUTH_ENV`, and `assertAuthEnvironment`. Keep `readJsonBody`, the 4KB body limit, `rateLimitedLogin`, and token issuance.
 
-- [ ] **Step 4: Map safe protocol/configuration errors and test the logs**
+- [x] **Step 4: Map safe protocol/configuration errors and test the logs**
 
 Update `responseForError`:
 
@@ -508,7 +508,7 @@ function responseForError(error) {
 
 Add assertions that invalid salt/hash return 503, `console.error` receives exactly `{ event: 'auth_configuration_invalid' }`, and logs contain no salt/hash/secret/proof. Change the 429 test to spy on `crypto.subtle.sign` and assert it is not called after the limiter rejects.
 
-- [ ] **Step 5: Run focused Worker tests and commit**
+- [x] **Step 5: Run focused Worker tests and commit**
 
 Run: `npx vitest run --config vitest.worker.config.js tests/worker/auth.test.js tests/worker/login-challenge.test.js tests/worker/router-auth.test.js`
 
