@@ -36,12 +36,15 @@ npx wrangler secret put AUTH_SECRET
 
 ## 登录限流
 
-在 Cloudflare 控制台为 `/api/auth/login` 创建 rate-limiting rule：
+生产 Worker 通过 `wrangler.toml` 中的 Worker 原生 Rate Limiting binding `LOGIN_RATE_LIMITER` 保护 `POST /api/auth/login`：
 
-- 匹配该精确路径，并按客户端 IP 计数。
-- 每分钟最多 10 次请求。
-- 超过限额后封禁 10 分钟，且只影响该 IP。
-- 在生产验收前，必须在 Cloudflare 控制台再次核对匹配路径、阈值、时间窗和封禁时长。
+- 以 Cloudflare 提供的客户端 IP 为键。
+- 每 60 秒最多允许 10 次登录请求。
+- 超限返回 HTTP 429 和 `Retry-After: 60`，下一个 60 秒窗口自动恢复。
+- 计数由 Cloudflare 按数据中心维护，不写入飞书五张业务表，也不新增 KV 或 Durable Object。
+- 限流基础设施异常时采用 fail-open，避免店铺完全无法登录；日志只记录固定事件名，不记录 IP、密码或服务异常详情。
+
+生产验收时应确认第 11 次同 IP 登录请求返回 429，并在下一窗口恢复。Cloudflare 原生计数为最终一致，短时间并发测试可能存在轻微宽松。
 
 ## 密钥轮换
 
@@ -67,7 +70,7 @@ npx wrangler secret put AUTH_SECRET
 
 ## 生产验收顺序
 
-在 secret、Pages Source 和限流规则都由管理员核对，且用户授权发布后，严格按以下顺序执行：
+在 secret、Pages Source 和限流绑定都已核对，且用户授权发布后，严格按以下顺序执行：
 
 1. GitHub Actions test job 成功。
 2. Worker 部署和健康检查成功。

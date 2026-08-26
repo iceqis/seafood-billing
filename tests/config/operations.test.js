@@ -97,10 +97,12 @@ test('operations runbook covers secret setup, safety controls, acceptance, and r
   assert.match(runbook, /已知正常提交/);
   assert.match(runbook, /git revert/);
   assert.match(runbook, /\/api\/auth\/login/);
+  assert.match(runbook, /Worker 原生 Rate Limiting binding/);
   assert.match(runbook, /客户端 IP/);
-  assert.match(runbook, /每分钟最多 10 次/);
-  assert.match(runbook, /封禁 10 分钟/);
-  assert.match(runbook, /Cloudflare[\s\S]*控制台[\s\S]*生产验收前/);
+  assert.match(runbook, /每 60 秒最多(?:允许 )?10 次/);
+  assert.match(runbook, /下一(?:个 )?60 秒窗口/);
+  assert.match(runbook, /HTTP 429/);
+  assert.doesNotMatch(runbook, /封禁 10 分钟/);
 
   const acceptanceSteps = [
     'GitHub Actions test job',
