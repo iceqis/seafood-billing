@@ -525,7 +525,7 @@ git commit -m "feat: route login through challenge proofs"
 - Create: `assets/js/auth-proof.js`
 - Create: `tests/frontend/auth-proof.test.js`
 
-- [ ] **Step 1: Write a failing known-vector test**
+- [x] **Step 1: Write a failing known-vector test**
 
 ```js
 import { describe, expect, it } from 'vitest';
@@ -557,13 +557,13 @@ describe('browser login proof', () => {
 
 The literal expected vector above was computed independently with `node:crypto` `pbkdf2Sync` plus `createHmac`; do not derive the expected value with production code.
 
-- [ ] **Step 2: Run the focused frontend test and verify RED**
+- [x] **Step 2: Run the focused frontend test and verify RED**
 
 Run: `npx vitest run --config vitest.config.js tests/frontend/auth-proof.test.js`
 
 Expected: FAIL because `assets/js/auth-proof.js` does not exist.
 
-- [ ] **Step 3: Implement the browser-only proof module**
+- [x] **Step 3: Implement the browser-only proof module**
 
 Create these exact public contracts:
 
@@ -620,11 +620,11 @@ export async function createLoginProof(password, challenge, options = {}) {
 }
 ```
 
-- [ ] **Step 4: Add malformed-field tests and make them pass**
+- [x] **Step 4: Add malformed-field tests and make them pass**
 
 Use `it.each` for invalid salt length, invalid token shape, wrong iterations, wrong hash name, non-integer expiration, and a rejected Web Crypto operation. Assert stable messages and never include the input password in an error.
 
-- [ ] **Step 5: Run focused tests and commit**
+- [x] **Step 5: Run focused tests and commit**
 
 Run: `npx vitest run --config vitest.config.js tests/frontend/auth-proof.test.js`
 
