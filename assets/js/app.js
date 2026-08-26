@@ -31,7 +31,7 @@ const api = { get: (path) => apiRequest(() => apiClient.get(path)), post: (path,
 function navigate(pageName) {
   document.querySelectorAll('.page-section').forEach((section) => section.classList.toggle('active', section.id === `page-${pageName}`));
   document.querySelectorAll('.nav-btn, .mobile-nav-btn').forEach((button) => button.classList.toggle('active', button.dataset.page === pageName));
-  document.getElementById('mobile-menu').classList.remove('show'); window.scrollTo(0, 0);
+  document.getElementById('mobile-menu').classList.remove('show'); document.getElementById('mobile-menu-btn').setAttribute('aria-expanded', 'false'); window.scrollTo(0, 0);
   if (pages?.[pageName]) void pages[pageName].enter().catch(() => {});
 }
 const deps = { api, state, today: () => getLocalDate(), version: APP_CONFIG.version, navigate, logout: () => invalidateSession(), showToast, onStats: () => pages?.home?.enter() };
@@ -44,7 +44,7 @@ async function performLogin() {
 function bindShell() {
   document.getElementById('login-form').addEventListener('submit', (event) => { event.preventDefault(); if (!loginInFlight) loginInFlight = performLogin(); });
   document.querySelectorAll('.nav-btn, .mobile-nav-btn').forEach((button) => button.addEventListener('click', () => navigate(button.dataset.page)));
-  document.getElementById('mobile-menu-btn').addEventListener('click', () => document.getElementById('mobile-menu').classList.toggle('show'));
+  document.getElementById('mobile-menu-btn').addEventListener('click', (event) => { const open = document.getElementById('mobile-menu').classList.toggle('show'); event.currentTarget.setAttribute('aria-expanded', String(open)); });
   document.querySelector('.modal-close')?.addEventListener('click', () => document.getElementById('modal-overlay').classList.remove('show'));
 }
 async function bootstrap() { bindShell(); if (!authStore.getToken()) { showLogin(); return; } showApplication(); try { await pages.home.enter(); } catch { /* API errors are surfaced by the client. */ } }

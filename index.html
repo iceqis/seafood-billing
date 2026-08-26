@@ -49,7 +49,7 @@
             </div>
             
             <!-- 手机菜单按钮 -->
-            <button class="mobile-menu-btn" id="mobile-menu-btn">☰</button>
+            <button class="mobile-menu-btn" id="mobile-menu-btn" type="button" aria-label="打开导航菜单" aria-controls="mobile-menu" aria-expanded="false">☰</button>
         </div>
         
         <!-- 手机下拉菜单 -->
@@ -175,29 +175,29 @@
                         <div class="card-body">
                             <div class="form-row mb-4">
                                 <div class="form-group mb-0">
-                                    <label class="form-label">📅 日期</label>
+                                    <label class="form-label" for="preorder-date">📅 日期</label>
                                     <input type="date" class="form-input" id="preorder-date">
                                 </div>
                                 <div class="form-group mb-0">
-                                    <label class="form-label">👤 客户</label>
+                                    <label class="form-label" for="preorder-customer">👤 客户</label>
                                     <select class="form-input" id="preorder-customer">
                                         <option value="">请选择客户</option>
                                     </select>
                                 </div>
                             </div>
                             <div class="form-group">
-                                <label class="form-label">常用客户</label>
+                                <div class="form-label">常用客户</div>
                                 <div class="chips" id="preorder-customer-chips">
                                     <!-- 动态生成 -->
                                 </div>
                             </div>
                             <div class="form-row form-row-2" id="preorder-customer-info" style="display: none;">
                                 <div class="form-group mb-0">
-                                    <label class="form-label">联系电话</label>
+                                    <label class="form-label" for="preorder-customer-phone">联系电话</label>
                                     <input type="text" class="form-input" id="preorder-customer-phone" readonly>
                                 </div>
                                 <div class="form-group mb-0">
-                                    <label class="form-label">结算方式</label>
+                                    <label class="form-label" for="preorder-customer-settlement">结算方式</label>
                                     <input type="text" class="form-input" id="preorder-customer-settlement" readonly>
                                 </div>
                             </div>
@@ -210,20 +210,20 @@
                         </div>
                         <div class="card-body">
                             <div class="form-group">
-                                <label class="form-label">选择商品</label>
+                                <label class="form-label" for="preorder-product">选择商品</label>
                                 <select class="form-input" id="preorder-product">
                                     <option value="">请选择商品</option>
                                 </select>
                             </div>
                             <div class="form-group">
-                                <label class="form-label">选择规格</label>
+                                <div class="form-label">选择规格</div>
                                 <div class="chips" id="preorder-spec-chips">
                                     <!-- 动态生成 -->
                                 </div>
                             </div>
                             <div class="form-row">
                                 <div class="form-group mb-0">
-                                    <label class="form-label">报货重量(斤)</label>
+                                    <label class="form-label" for="preorder-weight">报货重量(斤)</label>
                                     <input type="number" class="form-input" id="preorder-weight" placeholder="0" step="0.1">
                                 </div>
                             </div>
@@ -287,11 +287,11 @@
                         <div class="card-body">
                             <div class="form-row mb-4">
                                 <div class="form-group mb-0">
-                                    <label class="form-label">📅 日期</label>
+                                    <label class="form-label" for="purchase-date">📅 日期</label>
                                     <input type="date" class="form-input" id="purchase-date">
                                 </div>
                                 <div class="form-group mb-0">
-                                    <label class="form-label">🏭 供应商</label>
+                                    <label class="form-label" for="purchase-supplier">🏭 供应商</label>
                                     <select class="form-input" id="purchase-supplier">
                                         <option value="">请选择供应商</option>
                                     </select>
@@ -306,28 +306,28 @@
                         </div>
                         <div class="card-body">
                             <div class="form-group">
-                                <label class="form-label">选择商品</label>
+                                <label class="form-label" for="purchase-product">选择商品</label>
                                 <select class="form-input" id="purchase-product">
                                     <option value="">请选择商品</option>
                                 </select>
                             </div>
                             <div class="form-group">
-                                <label class="form-label">选择规格</label>
+                                <div class="form-label">选择规格</div>
                                 <div class="chips" id="purchase-spec-chips">
                                     <!-- 动态生成 -->
                                 </div>
                             </div>
                             <div class="form-row form-row-3">
                                 <div class="form-group mb-0">
-                                    <label class="form-label">进货重量(斤)</label>
+                                    <label class="form-label" for="purchase-weight">进货重量(斤)</label>
                                     <input type="number" class="form-input" id="purchase-weight" placeholder="0" step="0.1">
                                 </div>
                                 <div class="form-group mb-0">
-                                    <label class="form-label">进货单价(元/斤)</label>
+                                    <label class="form-label" for="purchase-price">进货单价(元/斤)</label>
                                     <input type="number" class="form-input" id="purchase-price" placeholder="0" step="0.1">
                                 </div>
                                 <div class="form-group mb-0">
-                                    <label class="form-label">金额(元)</label>
+                                    <label class="form-label" for="purchase-amount">金额(元)</label>
                                     <input type="text" class="form-input" id="purchase-amount" value="0.00" readonly>
                                 </div>
                             </div>
@@ -378,10 +378,12 @@
                 </div>
                 <div class="card-body">
                     <div class="form-row mb-4" style="grid-template-columns: 1fr auto;">
-                        <div class="input-with-icon" style="min-width: 0;">
+                        <label class="input-with-icon" style="min-width: 0;">
                             <span class="icon">🔍</span>
+                            <span class="visually-hidden">搜索客户或商品</span>
                             <input type="text" class="form-input" id="order-search" placeholder="搜索客户或商品">
-                        </div>
+                        </label>
+                        <label class="visually-hidden" for="order-date">订单日期</label>
                         <input type="date" class="form-input" id="order-date" style="width: 140px; flex-shrink: 0;">
                     </div>
                     <div class="text-sm text-gray mb-3" id="order-date-tip">默认展示当天订单</div>
@@ -401,10 +403,11 @@
                     <button class="btn btn-primary btn-sm">➕ 添加客户</button>
                 </div>
                 <div class="card-body">
-                    <div class="input-with-icon mb-4">
+                    <label class="input-with-icon mb-4">
                         <span class="icon">🔍</span>
+                        <span class="visually-hidden">搜索客户</span>
                         <input type="text" class="form-input" id="customer-search" placeholder="搜索客户">
-                    </div>
+                    </label>
 
                     <div id="customers-list">
                         <!-- 动态生成 -->
