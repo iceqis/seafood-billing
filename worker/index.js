@@ -11,6 +11,7 @@ import {
   verifyPassword,
   verifyToken
 } from './auth.js';
+import { checkLoginRateLimit } from './login-rate-limit.js';
 import { createCustomersService } from './services/customers.js';
 import { createOrdersService } from './services/orders.js';
 import { createProductsService } from './services/products.js';
@@ -176,6 +177,16 @@ async function login(request, env) {
     expiresIn: TOKEN_TTL_SECONDS,
     expiresAt: issuedAt + TOKEN_TTL_SECONDS
   });
+}
+
+async function rateLimitedLogin(request, env) {
+  if (!await checkLoginRateLimit(request, env)) {
+    return withHeaders(
+      errorResponse('登录尝试过于频繁，请稍后再试', 429),
+      { 'Retry-After': '60' }
+    );
+  }
+  return login(request, env);
 }
 
 async function requireAuthentication(request, env) {
@@ -380,7 +391,7 @@ export default {
         });
       } else if (url.pathname === '/api/auth/login' && request.method === 'POST') {
         response = origin
-          ? await login(request, env)
+          ? await rateLimitedLogin(request, env)
           : errorResponse('来源不允许', 403);
       } else {
         await requireAuthentication(request, env);

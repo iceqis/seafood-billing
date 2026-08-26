@@ -35,7 +35,8 @@ const env = {
   APP_VERSION: '3.1.0',
   SHOP_PASSWORD_SALT: encodeBase64(encoder.encode('router-test-salt')),
   SHOP_PASSWORD_HASH: '',
-  AUTH_SECRET
+  AUTH_SECRET,
+  LOGIN_RATE_LIMITER: null
 };
 
 function request(path, options = {}) {
@@ -49,6 +50,9 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
+  env.LOGIN_RATE_LIMITER = {
+    limit: vi.fn().mockResolvedValue({ success: true })
+  };
   vi.spyOn(console, 'log').mockImplementation(() => {});
 });
 
@@ -141,6 +145,29 @@ describe('authenticated Worker router', () => {
 
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toMatchObject({ code: 401, message: '店铺密码错误' });
+  });
+
+  it('returns 429 before reading or hashing a rate-limited login', async () => {
+    env.LOGIN_RATE_LIMITER.limit.mockResolvedValue({ success: false });
+    const deriveSpy = vi.spyOn(crypto.subtle, 'deriveBits');
+
+    const response = await worker.fetch(request('/api/auth/login', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'CF-Connecting-IP': '203.0.113.20'
+      },
+      body: JSON.stringify({ password: SHOP_PASSWORD })
+    }), env);
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get('Retry-After')).toBe('60');
+    await expect(response.json()).resolves.toMatchObject({
+      code: 429,
+      message: '登录尝试过于频繁，请稍后再试'
+    });
+    expect(env.LOGIN_RATE_LIMITER.limit).toHaveBeenCalledWith({ key: '203.0.113.20' });
+    expect(deriveSpy).not.toHaveBeenCalled();
   });
 
   it('rejects an oversized declared login body before reading or deriving a password', async () => {
