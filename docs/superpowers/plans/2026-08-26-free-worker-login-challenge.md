@@ -36,7 +36,7 @@
 - Create: `worker/login-challenge.js`
 - Create: `tests/worker/login-challenge.test.js`
 
-- [ ] **Step 1: Write failing tests for challenge issue and correct proof verification**
+- [x] **Step 1: Write failing tests for challenge issue and correct proof verification**
 
 ```js
 import { describe, expect, it } from 'vitest';
@@ -133,13 +133,13 @@ describe('login challenge', () => {
 });
 ```
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run: `npx vitest run --config vitest.worker.config.js tests/worker/login-challenge.test.js`
 
 Expected: FAIL because `worker/login-challenge.js` does not exist.
 
-- [ ] **Step 3: Implement strict configuration decoding and challenge issue/verify**
+- [x] **Step 3: Implement strict configuration decoding and challenge issue/verify**
 
 Create `worker/login-challenge.js` with these public contracts and no server-side PBKDF2 call:
 
@@ -319,7 +319,7 @@ export async function verifyLoginProof(body, env, options = {}) {
 
 The literal object order above is the protocol's stable JSON order. Keep the signature-before-parse order and do not add PBKDF2 to this Worker module.
 
-- [ ] **Step 4: Add failing edge-case tests, then complete the minimal validation**
+- [x] **Step 4: Add failing edge-case tests, then complete the minimal validation**
 
 Add concrete table-driven cases:
 
@@ -388,7 +388,7 @@ it.each([
 
 Run the focused test after each validation group until all cases pass.
 
-- [ ] **Step 5: Commit the Worker challenge core**
+- [x] **Step 5: Commit the Worker challenge core**
 
 ```bash
 git add worker/login-challenge.js tests/worker/login-challenge.test.js
