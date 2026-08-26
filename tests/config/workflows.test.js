@@ -81,6 +81,9 @@ test('production deploy is gated, least-privileged, and verifies Worker before P
   assert.match(workflow, /wranglerVersion: '4\.125\.0'/);
   assert.match(workflow, /seafood-billing-api\.iceqy0313\.workers\.dev\/api\/health/);
   assert.match(workflow, /seafood-billing-api\.iceqy0313\.workers\.dev\/api\/customers/);
+  assert.match(workflow, /Verify auth challenge/);
+  assert.match(workflow, /api\/auth\/challenge/);
+  assert.match(workflow, /Origin: https:\/\/iceqis\.github\.io/);
   assert.match(workflow, /EXPECTED_STATUS: '401'/);
   assert.match(workflow, /^    permissions:\n      contents: read\n      pages: write\n      id-token: write$/m);
   assert.match(workflow, /uses: actions\/upload-pages-artifact@[0-9a-f]{40} # v4\.0\.0\n        with:\n          path: _site/);

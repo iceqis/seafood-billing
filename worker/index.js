@@ -382,7 +382,7 @@ export default {
           code: 0,
           message: 'ok',
           data: {
-            version: env.APP_VERSION || '3.1.0',
+            version: env.APP_VERSION || '3.2.0',
             service: 'seafood-billing-api'
           }
         });

@@ -5,7 +5,7 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 ALLOWED_ORIGINS = "https://iceqis.github.io"
-APP_VERSION = "3.1.0"
+APP_VERSION = "3.2.0"
 
 [[ratelimits]]
 name = "LOGIN_RATE_LIMITER"
@@ -17,4 +17,4 @@ namespace_id = "2026082601"
 
 [env.dev.vars]
 ALLOWED_ORIGINS = "http://localhost:4173"
-APP_VERSION = "3.1.0-dev"
+APP_VERSION = "3.2.0-dev"

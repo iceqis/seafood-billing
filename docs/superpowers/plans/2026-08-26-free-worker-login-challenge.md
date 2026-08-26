@@ -873,7 +873,7 @@ git commit -m "test: cover challenge login user flows"
 - Modify: `tests/config/operations.test.js`
 - Modify: `docs/operations.md`
 
-- [ ] **Step 1: Write failing version and workflow assertions**
+- [x] **Step 1: Write failing version and workflow assertions**
 
 Update expected versions to `3.2.0` and add:
 
@@ -885,7 +885,7 @@ assert.match(runbook, /浏览器[\s\S]*PBKDF2[\s\S]*210,000/);
 assert.match(runbook, /登录服务配置异常[\s\S]*auth_configuration_invalid/);
 ```
 
-- [ ] **Step 2: Run config/baseline tests and verify RED**
+- [x] **Step 2: Run config/baseline tests and verify RED**
 
 Run: `node --test tests/config/*.test.js`
 
@@ -893,7 +893,7 @@ Run: `npx vitest run --config vitest.worker.config.js tests/worker/baseline.test
 
 Expected: FAIL on old version strings and missing challenge deployment check/runbook text.
 
-- [ ] **Step 3: Bump version and add the production challenge check**
+- [x] **Step 3: Bump version and add the production challenge check**
 
 Set `APP_CONFIG.version`, production/dev `APP_VERSION`, health fallback, HTML title/footer, and relevant assertions to `3.2.0`.
 
@@ -909,11 +909,11 @@ Add this step immediately after Worker health verification:
           https://seafood-billing-api.iceqy0313.workers.dev/api/auth/challenge
 ```
 
-- [ ] **Step 4: Document the exact new operations flow**
+- [x] **Step 4: Document the exact new operations flow**
 
 In `docs/operations.md`, document that PBKDF2 runs in the browser, the Worker verifies a 60-second proof, salt/hash rotation is unchanged, 503 means strict auth configuration validation failed, and no raw password/proof may appear in logs. Update production acceptance to require challenge 200, wrong password 401, correct login, and five-source read-only health before any separately authorized write test.
 
-- [ ] **Step 5: Run focused config/baseline tests and commit**
+- [x] **Step 5: Run focused config/baseline tests and commit**
 
 Run: `node --test tests/config/*.test.js`
 

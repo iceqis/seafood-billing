@@ -50,4 +50,16 @@ describe('frontend extracted assets', () => {
     expect(components).not.toContain('@media');
     expect(pages).not.toContain('@media');
   });
+
+  it('publishes release version 3.2.0 consistently in frontend configuration and HTML', () => {
+    const html = read('index.html');
+    const config = read('assets/js/config.js');
+    const wrangler = read('wrangler.toml');
+
+    expect(config).toContain("version: '3.2.0'");
+    expect(wrangler).toContain('APP_VERSION = "3.2.0"');
+    expect(wrangler).toContain('APP_VERSION = "3.2.0-dev"');
+    expect(html).toContain('<title>海鲜批发记账系统 v3.2.0</title>');
+    expect(html).toContain('版本 v3.2.0 · 已对接后端API');
+  });
 });

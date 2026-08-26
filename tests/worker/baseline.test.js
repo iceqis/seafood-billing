@@ -152,7 +152,7 @@ describe('worker production baseline', () => {
     await expect(response.json()).resolves.toEqual({
       code: 0,
       message: 'ok',
-      data: { version: '3.1.0', service: 'seafood-billing-api' }
+      data: { version: '3.2.0', service: 'seafood-billing-api' }
     });
     expect(fetchSpy).not.toHaveBeenCalled();
   });

@@ -103,12 +103,18 @@ test('operations runbook covers secret setup, safety controls, acceptance, and r
   assert.match(runbook, /下一(?:个 )?60 秒窗口/);
   assert.match(runbook, /HTTP 429/);
   assert.doesNotMatch(runbook, /封禁 10 分钟/);
+  assert.match(runbook, /浏览器[\s\S]*PBKDF2[\s\S]*210,000/);
+  assert.match(runbook, /60 秒[\s\S]*登录挑战/);
+  assert.match(runbook, /登录服务配置异常[\s\S]*auth_configuration_invalid/);
+  assert.match(runbook, /原始密码[\s\S]*证明[\s\S]*日志/);
 
   const acceptanceSteps = [
     'GitHub Actions test job',
     'Worker 部署和健康检查',
+    '挑战接口返回 200',
     'Pages 部署',
     '未登录访问业务接口返回 401',
+    '错误密码返回 401',
     '正确密码可以登录',
     '五张表的数据源检查全部成功',
     '系统验收',
