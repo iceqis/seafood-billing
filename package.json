@@ -6,9 +6,10 @@
     "node": "^22.12.0 || >=24.0.0"
   },
   "scripts": {
-    "test": "npm run test:frontend && npm run test:worker",
+    "test": "npm run test:frontend && npm run test:worker && npm run test:config",
     "test:frontend": "vitest run --config vitest.config.js",
     "test:worker": "vitest run --config vitest.worker.config.js",
+    "test:config": "node --test tests/config/*.test.js",
     "test:e2e": "playwright test",
     "check": "npm test && npm run test:e2e",
     "dev": "http-server . -p 4173 -c-1",
