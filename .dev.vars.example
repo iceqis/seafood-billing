@@ -1,0 +1,11 @@
+FEISHU_APP_ID=replace-with-app-id
+FEISHU_APP_SECRET=replace-with-app-secret
+FEISHU_BASE_TOKEN=replace-with-base-token
+TABLE_CUSTOMERS=replace-with-table-id
+TABLE_SUPPLIERS=replace-with-table-id
+TABLE_PRODUCTS=replace-with-table-id
+TABLE_ORDERS=replace-with-table-id
+TABLE_PURCHASES=replace-with-table-id
+SHOP_PASSWORD_SALT=replace-with-base64-salt
+SHOP_PASSWORD_HASH=replace-with-base64-pbkdf2-hash
+AUTH_SECRET=replace-with-random-signing-secret
