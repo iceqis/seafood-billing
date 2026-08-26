@@ -398,4 +398,3 @@ git log --oneline publish/main..HEAD
 ```
 
 Expected: ancestor check exits 0, status is clean, and only reviewed optimization plus rate-limit commits are ahead of `publish/main`.
-
