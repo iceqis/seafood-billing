@@ -931,19 +931,19 @@ git commit -m "docs: prepare challenge login deployment"
 **Files:**
 - Verify all changed files
 
-- [ ] **Step 1: Run the complete automated test suite**
+- [x] **Step 1: Run the complete automated test suite**
 
 Run: `npm test`
 
 Expected: frontend, Worker, and config suites all PASS with no unhandled rejection or secret output.
 
-- [ ] **Step 2: Run real-browser end-to-end tests**
+- [x] **Step 2: Run real-browser end-to-end tests**
 
 Run: `npm run test:e2e`
 
 Expected: all configured desktop/mobile scenarios PASS, with only the existing intentional project skip.
 
-- [ ] **Step 3: Build Pages and dry-run Worker deployment**
+- [x] **Step 3: Build Pages and dry-run Worker deployment**
 
 Run: `npm run build:pages`
 
@@ -953,7 +953,7 @@ Run: `WRANGLER_WRITE_LOGS=false npx wrangler deploy --dry-run --env=""`
 
 Expected: dry-run succeeds and lists only the existing `LOGIN_RATE_LIMITER` binding plus current variables.
 
-- [ ] **Step 4: Run static safety checks**
+- [x] **Step 4: Run static safety checks**
 
 Run: `git diff --check publish/main...HEAD`
 
@@ -961,11 +961,11 @@ Run: `rg -n "shared-shop-password|correct-shop-password|AUTH_SECRET=|SHOP_PASSWO
 
 Expected: no production secret value; test fixture strings must not occur in production files.
 
-- [ ] **Step 5: Request code review and fix only evidenced issues**
+- [x] **Step 5: Request code review and fix only evidenced issues**
 
 Invoke `superpowers:requesting-code-review`, review the complete diff against the approved spec, and run the affected focused test after each correction.
 
-- [ ] **Step 6: Re-run completion verification**
+- [x] **Step 6: Re-run completion verification**
 
 Invoke `superpowers:verification-before-completion`, then repeat `npm test`, `npm run test:e2e`, `npm run build:pages`, Wrangler dry-run, `git diff --check`, and `git status --short` with fresh output.
 
