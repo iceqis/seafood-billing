@@ -2,6 +2,7 @@ name = "seafood-billing-api"
 main = "worker/index.js"
 compatibility_date = "2026-08-23"
 compatibility_flags = ["nodejs_compat"]
+keep_vars = true
 
 [vars]
 ALLOWED_ORIGINS = "https://iceqis.github.io"

@@ -8,6 +8,7 @@ import test from 'node:test';
 const execFileAsync = promisify(execFile);
 const projectRoot = new URL('../../', import.meta.url);
 const readWorkflow = (name) => readFile(new URL(`../../.github/workflows/${name}`, import.meta.url), 'utf8');
+const readWranglerConfig = () => readFile(new URL('../../wrangler.toml', import.meta.url), 'utf8');
 
 const expectedActions = new Map([
   ['actions/checkout', { sha: '34e114876b0b11c390a56381ad16ebd13914f8d5', version: 'v4.3.1', count: 4 }],
@@ -89,6 +90,17 @@ test('production deploy is gated, least-privileged, and verifies Worker before P
   assert.match(workflow, /uses: actions\/upload-pages-artifact@[0-9a-f]{40} # v4\.0\.0\n        with:\n          path: _site/);
   assert.match(workflow, /DEPLOYED_PAGE_URL: \$\{\{ steps\.deployment\.outputs\.page_url \}\}/);
   assert.doesNotMatch(workflow, /^\s*-?\s*run:.*\$\{\{/m);
+});
+
+test('Worker deployment preserves variables managed in the Cloudflare dashboard', async () => {
+  const config = await readWranglerConfig();
+
+  assert.match(config, /^keep_vars = true$/m);
+  assert.equal(config.match(/^keep_vars = true$/gm)?.length, 1);
+  assert.ok(
+    config.indexOf('keep_vars = true') < config.indexOf('[vars]'),
+    'keep_vars must be a top-level Wrangler setting'
+  );
 });
 
 test('every external action is pinned to the reviewed immutable release commit', async () => {
