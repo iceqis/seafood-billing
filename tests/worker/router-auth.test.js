@@ -103,46 +103,15 @@ describe('authenticated Worker router', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('exposes only safe Feishu error codes through the temporary read-only diagnostic endpoint', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        code: 0, tenant_access_token: 'tenant-token', expire: 7200
-      })))
-      .mockImplementation((url) => {
-        const path = String(url);
-        if (path.includes('/tables/customers/')) {
-          return Promise.resolve(new Response(JSON.stringify({ code: 0, data: { items: [] } })));
-        }
-        if (path.includes('/tables/suppliers/')) {
-          return Promise.resolve(new Response(JSON.stringify({ code: 1254302, msg: 'secret supplier details' })));
-        }
-        if (path.includes('/tables/products/')) {
-          return Promise.resolve(new Response('forbidden', { status: 403 }));
-        }
-        if (path.includes('/tables/orders/')) {
-          return Promise.reject(new TypeError('network error with secret-token'));
-        }
-        return Promise.resolve(new Response(JSON.stringify({ code: 1254043, msg: 'secret purchase details' })));
-      });
-
+  it('does not leave the temporary Feishu diagnostic endpoint public', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const response = await worker.fetch(request('/api/health/feishu-diagnostic', {
       withOrigin: false
     }), env);
-    const body = await response.json();
 
-    expect(response.status).toBe(200);
-    expect(body.data).toEqual({
-      customers: { ok: true },
-      suppliers: { ok: false, upstreamCode: 1254302, upstreamStatus: 200 },
-      products: { ok: false, upstreamStatus: 403 },
-      orders: { ok: false },
-      purchases: { ok: false, upstreamCode: 1254043, upstreamStatus: 200 }
-    });
-    expect(JSON.stringify(body)).not.toMatch(/tenant-token|secret supplier details|secret purchase details|secret-token|"base"/);
-    expect(fetchSpy).toHaveBeenCalledTimes(12);
-    for (const [url] of fetchSpy.mock.calls.slice(1)) {
-      expect(new URL(url).searchParams.get('page_size')).toBe('500');
-    }
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toMatchObject({ code: 401, message: '请先登录' });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('rejects a denied Origin with 403 before authentication or Feishu', async () => {
