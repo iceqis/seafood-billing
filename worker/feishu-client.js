@@ -1,5 +1,6 @@
 const FEISHU_API_BASE = 'https://open.feishu.cn/open-apis';
 const READ_RETRY_DELAYS_MS = [150, 500];
+const TRANSIENT_READ_CODES = new Set([1254290]);
 
 function defaultSleep(delay) {
   return new Promise((resolve) => setTimeout(resolve, delay));
@@ -75,7 +76,9 @@ export function createFeishuClient(env, fetchImpl = fetch, { sleepImpl = default
 
   function shouldRetryRead(error) {
     if (!(error instanceof FeishuError)) return true;
-    if (Number.isInteger(error.upstreamCode)) return true;
+    if (Number.isInteger(error.upstreamCode)) {
+      return TRANSIENT_READ_CODES.has(error.upstreamCode);
+    }
     if (Number.isInteger(error.upstreamStatus)) {
       return error.upstreamStatus === 429 || error.upstreamStatus >= 500;
     }

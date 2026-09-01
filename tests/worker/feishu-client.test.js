@@ -47,6 +47,35 @@ describe('Feishu client', () => {
     expect(sleepImpl).not.toHaveBeenCalled();
   });
 
+  it('does not retry a permanent Feishu business error returned with HTTP 200', async () => {
+    const sleepImpl = vi.fn().mockResolvedValue(undefined);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ code: 0, tenant_access_token: 'token', expire: 7200 }))
+      .mockImplementation(() => Promise.resolve(response({ code: 1254003, msg: 'invalid table id' })));
+
+    await expect(createFeishuClient(env, fetchMock, { sleepImpl }).listAllRecords('table'))
+      .rejects.toMatchObject({ message: '读取飞书数据失败', upstreamCode: 1254003 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sleepImpl).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['create', 'POST', (client) => client.createRecord('table', { 名称: '虾' })],
+    ['update', 'PUT', (client) => client.updateRecord('table', 'rec1', { 价格: 40 })],
+    ['delete', 'DELETE', (client) => client.deleteRecord('table', 'rec1')]
+  ])('never retries a failed %s write request', async (_operation, method, invoke) => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ code: 0, tenant_access_token: 'token', expire: 7200 }))
+      .mockRejectedValueOnce(new TypeError('temporary write network failure'));
+
+    await expect(invoke(createFeishuClient(env, fetchMock))).rejects.toThrow('写入飞书数据失败');
+    const writeCalls = fetchMock.mock.calls.filter(([url, options]) =>
+      String(url).includes('/records') && options?.method === method
+    );
+    expect(writeCalls).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it.each([
     ['authentication', (fetchMock) => createFeishuClient(env, fetchMock).getTenantToken(), [], '飞书认证失败'],
     ['read', (fetchMock) => createFeishuClient(env, fetchMock).listAllRecords('table'), [
