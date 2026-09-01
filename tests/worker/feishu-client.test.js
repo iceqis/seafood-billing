@@ -15,6 +15,38 @@ function response(body, init = {}) {
 }
 
 describe('Feishu client', () => {
+  it('retries transient read failures and succeeds without repeating authentication', async () => {
+    const sleepImpl = vi.fn().mockResolvedValue(undefined);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ code: 0, tenant_access_token: 'token', expire: 7200 }))
+      .mockResolvedValueOnce(response({ code: 1254290, msg: 'temporary limit' }))
+      .mockRejectedValueOnce(new TypeError('temporary network failure'))
+      .mockResolvedValueOnce(response({
+        code: 0,
+        data: { items: [{ record_id: 'recovered', fields: {} }], has_more: false }
+      }));
+
+    const records = await createFeishuClient(env, fetchMock, { sleepImpl })
+      .listAllRecords('table');
+
+    expect(records.map(({ record_id: id }) => id)).toEqual(['recovered']);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/auth/'))).toHaveLength(1);
+    expect(sleepImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry a non-transient read permission failure', async () => {
+    const sleepImpl = vi.fn().mockResolvedValue(undefined);
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ code: 0, tenant_access_token: 'token', expire: 7200 }))
+      .mockResolvedValueOnce(new Response('forbidden', { status: 403 }));
+
+    await expect(createFeishuClient(env, fetchMock, { sleepImpl }).listAllRecords('table'))
+      .rejects.toMatchObject({ message: '读取飞书数据失败', upstreamStatus: 403 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sleepImpl).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['authentication', (fetchMock) => createFeishuClient(env, fetchMock).getTenantToken(), [], '飞书认证失败'],
     ['read', (fetchMock) => createFeishuClient(env, fetchMock).listAllRecords('table'), [

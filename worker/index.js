@@ -370,7 +370,14 @@ function responseForError(error) {
   }
   if (error instanceof LoginChallengeError) return errorResponse(error.message, error.status);
   if (error instanceof ValidationError) return errorResponse(error.message, error.status);
-  if (error instanceof FeishuError) return errorResponse(error.message, 502);
+  if (error instanceof FeishuError) {
+    console.error({
+      event: 'feishu_request_failed',
+      upstreamCode: error.upstreamCode ?? null,
+      upstreamStatus: error.upstreamStatus ?? null
+    });
+    return errorResponse(error.message, 502);
+  }
   return errorResponse('服务器内部错误', 500);
 }
 

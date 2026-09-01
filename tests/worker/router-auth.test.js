@@ -108,11 +108,22 @@ describe('authenticated Worker router', () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({
         code: 0, tenant_access_token: 'tenant-token', expire: 7200
       })))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, data: { items: [] } })))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 1254302, msg: 'secret supplier details' })))
-      .mockResolvedValueOnce(new Response('forbidden', { status: 403 }))
-      .mockRejectedValueOnce(new TypeError('network error with secret-token'))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 1254043, msg: 'secret purchase details' })));
+      .mockImplementation((url) => {
+        const path = String(url);
+        if (path.includes('/tables/customers/')) {
+          return Promise.resolve(new Response(JSON.stringify({ code: 0, data: { items: [] } })));
+        }
+        if (path.includes('/tables/suppliers/')) {
+          return Promise.resolve(new Response(JSON.stringify({ code: 1254302, msg: 'secret supplier details' })));
+        }
+        if (path.includes('/tables/products/')) {
+          return Promise.resolve(new Response('forbidden', { status: 403 }));
+        }
+        if (path.includes('/tables/orders/')) {
+          return Promise.reject(new TypeError('network error with secret-token'));
+        }
+        return Promise.resolve(new Response(JSON.stringify({ code: 1254043, msg: 'secret purchase details' })));
+      });
 
     const response = await worker.fetch(request('/api/health/feishu-diagnostic', {
       withOrigin: false
@@ -128,7 +139,7 @@ describe('authenticated Worker router', () => {
       purchases: { ok: false, upstreamCode: 1254043, upstreamStatus: 200 }
     });
     expect(JSON.stringify(body)).not.toMatch(/tenant-token|secret supplier details|secret purchase details|secret-token|"base"/);
-    expect(fetchSpy).toHaveBeenCalledTimes(6);
+    expect(fetchSpy).toHaveBeenCalledTimes(12);
     for (const [url] of fetchSpy.mock.calls.slice(1)) {
       expect(new URL(url).searchParams.get('page_size')).toBe('500');
     }
@@ -372,6 +383,36 @@ describe('authenticated Worker router', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('Access-Control-Allow-Origin')).toBeNull();
     expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('logs only safe upstream metadata when a Feishu read still fails after retries', async () => {
+    const token = await issueToken(AUTH_SECRET);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 0, tenant_access_token: 'tenant-token', expire: 7200
+      })))
+      .mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
+        code: 1254290, msg: 'sensitive upstream details'
+      }))));
+
+    const response = await worker.fetch(request('/api/customers', {
+      headers: { Authorization: `Bearer ${token}` },
+      withOrigin: false
+    }), env);
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 502,
+      message: '读取飞书数据失败'
+    });
+    expect(errorSpy).toHaveBeenCalledOnce();
+    expect(errorSpy).toHaveBeenCalledWith({
+      event: 'feishu_request_failed',
+      upstreamCode: 1254290,
+      upstreamStatus: 200
+    });
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toMatch(/tenant-token|sensitive upstream details|secret|base/);
   });
 
   it('protects the data-source health check and returns only five availability booleans', async () => {

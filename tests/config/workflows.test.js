@@ -9,6 +9,7 @@ const execFileAsync = promisify(execFile);
 const projectRoot = new URL('../../', import.meta.url);
 const readWorkflow = (name) => readFile(new URL(`../../.github/workflows/${name}`, import.meta.url), 'utf8');
 const readWranglerConfig = () => readFile(new URL('../../wrangler.toml', import.meta.url), 'utf8');
+const readRuntimeConfig = () => readFile(new URL('../../assets/js/config.js', import.meta.url), 'utf8');
 
 const expectedActions = new Map([
   ['actions/checkout', { sha: '34e114876b0b11c390a56381ad16ebd13914f8d5', version: 'v4.3.1', count: 4 }],
@@ -104,6 +105,12 @@ test('Worker deployment preserves variables managed in the Cloudflare dashboard'
     config.indexOf('keep_vars = true') < config.indexOf('[vars]'),
     'keep_vars must be a top-level Wrangler setting'
   );
+});
+
+test('browser timeout leaves enough time for bounded Feishu read recovery', async () => {
+  const config = await readRuntimeConfig();
+
+  assert.match(config, /requestTimeoutMs:\s*30000/);
 });
 
 test('every external action is pinned to the reviewed immutable release commit', async () => {

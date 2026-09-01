@@ -1,4 +1,9 @@
 const FEISHU_API_BASE = 'https://open.feishu.cn/open-apis';
+const READ_RETRY_DELAYS_MS = [150, 500];
+
+function defaultSleep(delay) {
+  return new Promise((resolve) => setTimeout(resolve, delay));
+}
 
 export class FeishuError extends Error {
   constructor(message, { upstreamCode, upstreamStatus } = {}) {
@@ -10,7 +15,7 @@ export class FeishuError extends Error {
   }
 }
 
-export function createFeishuClient(env, fetchImpl = fetch) {
+export function createFeishuClient(env, fetchImpl = fetch, { sleepImpl = defaultSleep } = {}) {
   let tokenCache = null;
 
   async function withFeishuError(errorMessage, operation) {
@@ -68,6 +73,37 @@ export function createFeishuClient(env, fetchImpl = fetch) {
     return `${FEISHU_API_BASE}/bitable/v1/apps/${env.FEISHU_BASE_TOKEN}/tables/${tableId}/records${suffix}`;
   }
 
+  function shouldRetryRead(error) {
+    if (!(error instanceof FeishuError)) return true;
+    if (Number.isInteger(error.upstreamCode)) return true;
+    if (Number.isInteger(error.upstreamStatus)) {
+      return error.upstreamStatus === 429 || error.upstreamStatus >= 500;
+    }
+    return error.message === '读取飞书数据失败';
+  }
+
+  async function readRecordsBody(url) {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        const response = await withFeishuError('读取飞书数据失败', async () => fetchImpl(url, {
+          headers: { Authorization: `Bearer ${await getTenantToken()}` }
+        }));
+        const body = await readBody(response, '读取飞书数据失败');
+        if (body.code !== 0) {
+          throw new FeishuError('读取飞书数据失败', {
+            upstreamCode: body.code,
+            upstreamStatus: response.status
+          });
+        }
+        return body;
+      } catch (error) {
+        const delay = READ_RETRY_DELAYS_MS[attempt];
+        if (delay === undefined || !shouldRetryRead(error)) throw error;
+        await sleepImpl(delay);
+      }
+    }
+  }
+
   async function listAllRecords(tableId, filter = null) {
     const items = [];
     let pageToken = '';
@@ -79,16 +115,7 @@ export function createFeishuClient(env, fetchImpl = fetch) {
       if (pageToken) url.searchParams.set('page_token', pageToken);
       if (filter) url.searchParams.set('filter', JSON.stringify(filter));
 
-      const response = await withFeishuError('读取飞书数据失败', async () => fetchImpl(url, {
-        headers: { Authorization: `Bearer ${await getTenantToken()}` }
-      }));
-      const body = await readBody(response, '读取飞书数据失败');
-      if (body.code !== 0) {
-        throw new FeishuError('读取飞书数据失败', {
-          upstreamCode: body.code,
-          upstreamStatus: response.status
-        });
-      }
+      const body = await readRecordsBody(url);
 
       items.push(...(body.data?.items ?? []));
       if (body.data?.has_more) {
@@ -109,16 +136,7 @@ export function createFeishuClient(env, fetchImpl = fetch) {
   async function checkTable(tableId) {
     const url = new URL(recordsUrl(tableId));
     url.searchParams.set('page_size', '1');
-    const response = await withFeishuError('读取飞书数据失败', async () => fetchImpl(url, {
-      headers: { Authorization: `Bearer ${await getTenantToken()}` }
-    }));
-    const body = await readBody(response, '读取飞书数据失败');
-    if (body.code !== 0) {
-      throw new FeishuError('读取飞书数据失败', {
-        upstreamCode: body.code,
-        upstreamStatus: response.status
-      });
-    }
+    await readRecordsBody(url);
     return true;
   }
 
