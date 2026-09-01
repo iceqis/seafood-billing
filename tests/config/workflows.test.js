@@ -77,6 +77,11 @@ test('production deploy is gated, least-privileged, and verifies Worker before P
   assert.match(workflow, /^  test:\n    if: github\.ref == 'refs\/heads\/main'$/m);
   assert.match(workflow, /^  deploy-worker:\n    needs: test$/m);
   assert.match(workflow, /^  deploy-pages:\n    needs: deploy-worker$/m);
+  assert.match(workflow, /- name: Restore Feishu variables without code rollback/);
+  assert.match(workflow, /CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN \}\}/);
+  assert.match(workflow, /CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.CLOUDFLARE_ACCOUNT_ID \}\}/);
+  assert.match(workflow, /SOURCE_VERSION_PREFIX: b01f1b84/);
+  assert.match(workflow, /run: node scripts\/recover-feishu-vars\.js/);
   assert.match(workflow, /apiToken: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN \}\}/);
   assert.match(workflow, /accountId: \$\{\{ secrets\.CLOUDFLARE_ACCOUNT_ID \}\}/);
   assert.match(workflow, /wranglerVersion: '4\.125\.0'/);
