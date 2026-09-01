@@ -129,6 +129,9 @@ describe('authenticated Worker router', () => {
     });
     expect(JSON.stringify(body)).not.toMatch(/tenant-token|secret supplier details|secret purchase details|secret-token|"base"/);
     expect(fetchSpy).toHaveBeenCalledTimes(6);
+    for (const [url] of fetchSpy.mock.calls.slice(1)) {
+      expect(new URL(url).searchParams.get('page_size')).toBe('500');
+    }
   });
 
   it('rejects a denied Origin with 403 before authentication or Feishu', async () => {

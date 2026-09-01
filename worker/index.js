@@ -210,7 +210,7 @@ async function diagnoseDataSources(feishu, env) {
   const diagnostics = {};
   for (const [name, envKey] of Object.entries(DATA_SOURCE_TABLES)) {
     try {
-      await feishu.checkTable(env[envKey]);
+      await feishu.listAllRecords(env[envKey]);
       diagnostics[name] = { ok: true };
     } catch (error) {
       if (!(error instanceof FeishuError)) throw error;

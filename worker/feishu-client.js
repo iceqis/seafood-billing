@@ -83,7 +83,12 @@ export function createFeishuClient(env, fetchImpl = fetch) {
         headers: { Authorization: `Bearer ${await getTenantToken()}` }
       }));
       const body = await readBody(response, '读取飞书数据失败');
-      if (body.code !== 0) throw new FeishuError('读取飞书数据失败');
+      if (body.code !== 0) {
+        throw new FeishuError('读取飞书数据失败', {
+          upstreamCode: body.code,
+          upstreamStatus: response.status
+        });
+      }
 
       items.push(...(body.data?.items ?? []));
       if (body.data?.has_more) {
