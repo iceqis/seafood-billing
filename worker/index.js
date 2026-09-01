@@ -206,6 +206,24 @@ async function checkDataSources(feishu, env) {
   return availability;
 }
 
+async function diagnoseDataSources(feishu, env) {
+  const diagnostics = {};
+  for (const [name, envKey] of Object.entries(DATA_SOURCE_TABLES)) {
+    try {
+      await feishu.checkTable(env[envKey]);
+      diagnostics[name] = { ok: true };
+    } catch (error) {
+      if (!(error instanceof FeishuError)) throw error;
+      diagnostics[name] = {
+        ok: false,
+        ...(Number.isInteger(error.upstreamCode) ? { upstreamCode: error.upstreamCode } : {}),
+        ...(Number.isInteger(error.upstreamStatus) ? { upstreamStatus: error.upstreamStatus } : {})
+      };
+    }
+  }
+  return diagnostics;
+}
+
 async function translateLegacyOrderUpdate(orders, id, body) {
   const targetStatus = body.status === undefined ? undefined : statusFromFeishu(body.status);
   const hasWeight = body.actualWeight !== undefined;
@@ -394,6 +412,9 @@ export default {
         response = origin
           ? await rateLimitedLogin(request, env)
           : errorResponse('来源不允许', 403);
+      } else if (url.pathname === '/api/health/feishu-diagnostic' && request.method === 'GET') {
+        assertEnvironment(env);
+        response = successResponse(await diagnoseDataSources(createFeishuClient(env), env));
       } else {
         await requireAuthentication(request, env);
         response = await routeProtectedRequest(request, env);

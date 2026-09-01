@@ -103,6 +103,34 @@ describe('authenticated Worker router', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it('exposes only safe Feishu error codes through the temporary read-only diagnostic endpoint', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 0, tenant_access_token: 'tenant-token', expire: 7200
+      })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, data: { items: [] } })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 1254302, msg: 'secret supplier details' })))
+      .mockResolvedValueOnce(new Response('forbidden', { status: 403 }))
+      .mockRejectedValueOnce(new TypeError('network error with secret-token'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 1254043, msg: 'secret purchase details' })));
+
+    const response = await worker.fetch(request('/api/health/feishu-diagnostic', {
+      withOrigin: false
+    }), env);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data).toEqual({
+      customers: { ok: true },
+      suppliers: { ok: false, upstreamCode: 1254302, upstreamStatus: 200 },
+      products: { ok: false, upstreamStatus: 403 },
+      orders: { ok: false },
+      purchases: { ok: false, upstreamCode: 1254043, upstreamStatus: 200 }
+    });
+    expect(JSON.stringify(body)).not.toMatch(/tenant-token|secret supplier details|secret purchase details|secret-token|"base"/);
+    expect(fetchSpy).toHaveBeenCalledTimes(6);
+  });
+
   it('rejects a denied Origin with 403 before authentication or Feishu', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const response = await worker.fetch(request('/api/orders', {

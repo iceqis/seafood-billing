@@ -82,6 +82,8 @@ test('production deploy is gated, least-privileged, and verifies Worker before P
   assert.match(workflow, /accountId: \$\{\{ secrets\.CLOUDFLARE_ACCOUNT_ID \}\}/);
   assert.match(workflow, /wranglerVersion: '4\.125\.0'/);
   assert.match(workflow, /seafood-billing-api\.iceqy0313\.workers\.dev\/api\/health/);
+  assert.match(workflow, /- name: Run temporary read-only Feishu diagnostic/);
+  assert.match(workflow, /seafood-billing-api\.iceqy0313\.workers\.dev\/api\/health\/feishu-diagnostic/);
   assert.match(workflow, /seafood-billing-api\.iceqy0313\.workers\.dev\/api\/customers/);
   assert.match(workflow, /Verify auth challenge/);
   assert.match(workflow, /api\/auth\/challenge/);
