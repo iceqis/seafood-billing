@@ -59,9 +59,38 @@ export async function recoverFeishuVariables({
     return payload.result;
   }
 
+  const currentSettings = await request(`${scriptPath}/settings`);
+  const currentBindings = currentSettings?.bindings;
+  if (!Array.isArray(currentBindings)) {
+    throw new Error('Current Worker settings do not contain readable bindings');
+  }
+
+  const requiredNames = new Set(FEISHU_VARIABLE_NAMES);
+  const existingRequiredBindings = currentBindings.filter(({ name }) => requiredNames.has(name));
+  if (existingRequiredBindings.length > 0) {
+    const validExistingNames = new Set();
+    for (const binding of existingRequiredBindings) {
+      if (
+        binding.type !== 'plain_text'
+        || typeof binding.text !== 'string'
+        || binding.text.trim() === ''
+        || validExistingNames.has(binding.name)
+      ) {
+        throw new Error('Current Worker Feishu variables are partially configured');
+      }
+      validExistingNames.add(binding.name);
+    }
+    if (validExistingNames.size !== FEISHU_VARIABLE_NAMES.length) {
+      throw new Error('Current Worker Feishu variables are partially configured');
+    }
+    log('All seven Feishu variables are already present; recovery skipped.');
+    return { restoredCount: 0, sourceVersionId: null };
+  }
+
   const versions = await request(`${scriptPath}/versions?per_page=100`);
-  const sourceMatches = Array.isArray(versions)
-    ? versions.filter(({ id }) => typeof id === 'string' && id.startsWith(safeVersionPrefix))
+  const versionItems = versions?.items;
+  const sourceMatches = Array.isArray(versionItems)
+    ? versionItems.filter(({ id }) => typeof id === 'string' && id.startsWith(safeVersionPrefix))
     : [];
   if (sourceMatches.length !== 1) {
     throw new Error(`Expected exactly one source version matching ${safeVersionPrefix}; found ${sourceMatches.length}`);
@@ -86,16 +115,10 @@ export async function recoverFeishuVariables({
     return { name, type: 'plain_text', text: binding.text };
   });
 
-  const currentSettings = await request(`${scriptPath}/settings`);
-  const currentBindings = currentSettings?.bindings;
-  if (!Array.isArray(currentBindings)) {
-    throw new Error('Current Worker settings do not contain readable bindings');
-  }
-  const recoveredNames = new Set(FEISHU_VARIABLE_NAMES);
   const currentNames = new Set();
   const inheritedBindings = [];
   for (const binding of currentBindings) {
-    if (typeof binding?.name !== 'string' || binding.name === '' || recoveredNames.has(binding.name)) continue;
+    if (typeof binding?.name !== 'string' || binding.name === '' || requiredNames.has(binding.name)) continue;
     if (currentNames.has(binding.name)) throw new Error(`Current Worker contains duplicate binding ${binding.name}`);
     currentNames.add(binding.name);
     inheritedBindings.push({ name: binding.name, type: 'inherit' });
@@ -107,7 +130,7 @@ export async function recoverFeishuVariables({
   };
   const form = new FormData();
   form.append('settings', JSON.stringify(settings));
-  const patched = await request(`${scriptPath}/settings`, { method: 'PATCH', body: form });
+  await request(`${scriptPath}/settings`, { method: 'PATCH', body: form });
 
   const verifiedSettings = await request(`${scriptPath}/settings`);
   const verifiedBindings = verifiedSettings?.bindings;
@@ -124,8 +147,7 @@ export async function recoverFeishuVariables({
   log(`Recovered ${FEISHU_VARIABLE_NAMES.length} allow-listed Feishu variables from version ${safeVersionPrefix}.`);
   return {
     restoredCount: FEISHU_VARIABLE_NAMES.length,
-    sourceVersionId,
-    versionId: patched?.id
+    sourceVersionId
   };
 }
 

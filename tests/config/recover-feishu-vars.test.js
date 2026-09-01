@@ -42,13 +42,13 @@ test('restores only the seven allow-listed Feishu variables while inheriting cur
     calls.push({ url, options });
 
     if (url.endsWith('/versions?per_page=100')) {
-      return jsonResponse([{ id: sourceVersionId }]);
+      return jsonResponse({ items: [{ id: sourceVersionId }] });
     }
     if (url.endsWith(`/versions/${sourceVersionId}`)) {
       return jsonResponse({ resources: { bindings: [...recovered, { name: 'IGNORED', type: 'plain_text', text: 'do-not-copy' }] } });
     }
     if (url.endsWith('/settings') && options.method === 'PATCH') {
-      return jsonResponse({ id: 'new-version-id' });
+      return jsonResponse({ bindings: [...currentBindings, ...recovered] });
     }
     if (url.endsWith('/settings')) {
       const settingsReads = calls.filter((call) => call.url.endsWith('/settings') && !call.options.method).length;
@@ -66,7 +66,7 @@ test('restores only the seven allow-listed Feishu variables while inheriting cur
     sourceVersionPrefix: 'b01f1b84'
   });
 
-  assert.deepEqual(result, { restoredCount: 7, sourceVersionId, versionId: 'new-version-id' });
+  assert.deepEqual(result, { restoredCount: 7, sourceVersionId });
   const patchCall = calls.find((call) => call.options.method === 'PATCH');
   assert.ok(patchCall);
   assert.equal(patchCall.options.headers.Authorization, 'Bearer token-value');
@@ -85,7 +85,8 @@ test('fails before mutation when a required Feishu variable is absent', async ()
   const bindings = sourceBindings().filter(({ name }) => name !== 'TABLE_PURCHASES');
   const fetchImpl = async (url, options = {}) => {
     if (options.method === 'PATCH') patchCalled = true;
-    if (url.endsWith('/versions?per_page=100')) return jsonResponse([{ id: sourceVersionId }]);
+    if (url.endsWith('/settings') && !options.method) return jsonResponse({ bindings: [] });
+    if (url.endsWith('/versions?per_page=100')) return jsonResponse({ items: [{ id: sourceVersionId }] });
     if (url.endsWith(`/versions/${sourceVersionId}`)) return jsonResponse({ resources: { bindings } });
     throw new Error(`Unexpected request: ${url}`);
   };
@@ -108,8 +109,9 @@ test('rejects a non-plain-text source binding and ambiguous version prefix', asy
   const invalidBindings = sourceBindings({ FEISHU_APP_ID: 'secret-value' });
   invalidBindings.find(({ name }) => name === 'FEISHU_APP_ID').type = 'secret_text';
   const ambiguousFetch = async (url) => {
+    if (url.endsWith('/settings')) return jsonResponse({ bindings: [] });
     if (url.endsWith('/versions?per_page=100')) {
-      return jsonResponse([{ id: `${sourceVersionId}-a` }, { id: `${sourceVersionId}-b` }]);
+      return jsonResponse({ items: [{ id: `${sourceVersionId}-a` }, { id: `${sourceVersionId}-b` }] });
     }
     throw new Error(`Unexpected request: ${url}`);
   };
@@ -127,7 +129,8 @@ test('rejects a non-plain-text source binding and ambiguous version prefix', asy
   );
 
   const invalidFetch = async (url) => {
-    if (url.endsWith('/versions?per_page=100')) return jsonResponse([{ id: sourceVersionId }]);
+    if (url.endsWith('/settings')) return jsonResponse({ bindings: [] });
+    if (url.endsWith('/versions?per_page=100')) return jsonResponse({ items: [{ id: sourceVersionId }] });
     if (url.endsWith(`/versions/${sourceVersionId}`)) return jsonResponse({ resources: { bindings: invalidBindings } });
     throw new Error(`Unexpected request: ${url}`);
   };
@@ -142,4 +145,54 @@ test('rejects a non-plain-text source binding and ambiguous version prefix', asy
     }),
     /FEISHU_APP_ID/
   );
+});
+
+test('is a no-op when all seven current variables are already present', async () => {
+  const calls = [];
+  const currentBindings = [
+    { name: 'AUTH_SECRET', type: 'secret_text' },
+    ...sourceBindings()
+  ];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url.endsWith('/settings') && !options.method) return jsonResponse({ bindings: currentBindings });
+    throw new Error(`Unexpected request: ${url}`);
+  };
+
+  const result = await recoverFeishuVariables({
+    accountId,
+    apiToken: 'token-value',
+    fetchImpl,
+    log: () => {},
+    scriptName,
+    sourceVersionPrefix: 'b01f1b84'
+  });
+
+  assert.deepEqual(result, { restoredCount: 0, sourceVersionId: null });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.method, undefined);
+});
+
+test('fails before source lookup or mutation when current Feishu variables are only partially present', async () => {
+  const calls = [];
+  const fetchImpl = async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url.endsWith('/settings') && !options.method) {
+      return jsonResponse({ bindings: [{ name: 'FEISHU_APP_ID', type: 'plain_text', text: 'existing-value' }] });
+    }
+    throw new Error(`Unexpected request: ${url}`);
+  };
+
+  await assert.rejects(
+    recoverFeishuVariables({
+      accountId,
+      apiToken: 'token-value',
+      fetchImpl,
+      log: () => {},
+      scriptName,
+      sourceVersionPrefix: 'b01f1b84'
+    }),
+    /partially configured/
+  );
+  assert.equal(calls.length, 1);
 });

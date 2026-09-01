@@ -82,6 +82,8 @@ test('production deploy is gated, least-privileged, and verifies Worker before P
   assert.match(workflow, /CLOUDFLARE_ACCOUNT_ID: \$\{\{ secrets\.CLOUDFLARE_ACCOUNT_ID \}\}/);
   assert.match(workflow, /SOURCE_VERSION_PREFIX: b01f1b84/);
   assert.match(workflow, /run: node scripts\/recover-feishu-vars\.js/);
+  assert.match(workflow, /- name: Verify Feishu variables survived deployment/);
+  assert.equal(workflow.match(/run: node scripts\/recover-feishu-vars\.js/g)?.length, 2);
   assert.match(workflow, /apiToken: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN \}\}/);
   assert.match(workflow, /accountId: \$\{\{ secrets\.CLOUDFLARE_ACCOUNT_ID \}\}/);
   assert.match(workflow, /wranglerVersion: '4\.125\.0'/);
