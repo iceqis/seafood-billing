@@ -103,102 +103,17 @@ describe('authenticated Worker router', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('does not leave the temporary Feishu diagnostic endpoint public', async () => {
+  it.each([
+    '/api/health/feishu-diagnostic',
+    '/api/health/business-diagnostic'
+  ])('does not leave the temporary diagnostic endpoint public: %s', async (path) => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    const response = await worker.fetch(request('/api/health/feishu-diagnostic', {
+    const response = await worker.fetch(request(path, {
       withOrigin: false
     }), env);
 
     expect(response.status).toBe(401);
     await expect(response.json()).resolves.toMatchObject({ code: 401, message: '请先登录' });
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
-
-  it('temporarily verifies real business reads without returning records or performing writes', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        code: 0, tenant_access_token: 'tenant-token', expire: 7200
-      })))
-      .mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
-        code: 0, data: { items: [], has_more: false }
-      }))));
-
-    const response = await worker.fetch(request('/api/health/business-diagnostic', {
-      withOrigin: false
-    }), env);
-    const body = await response.json();
-
-    expect(response.status).toBe(200);
-    expect(body.data).toEqual({
-      customers: true,
-      suppliers: true,
-      products: true,
-      filteredOrders: true,
-      multiStatusOrders: true,
-      datedOrders: true,
-      datedPurchases: true,
-      homeStats: true
-    });
-    expect(JSON.stringify(body)).not.toMatch(/tenant-token|items|record|table|secret|base/);
-    const recordCalls = fetchSpy.mock.calls.filter(([url]) => String(url).includes('/records'));
-    expect(recordCalls).toHaveLength(9);
-    expect(recordCalls.filter(([url, options]) =>
-      String(url).endsWith('/search?page_size=500') && options.method === 'POST'
-    )).toHaveLength(1);
-    expect(recordCalls.every(([, options]) => ['GET', 'POST'].includes(options.method))).toBe(true);
-    expect(env.LOGIN_RATE_LIMITER.limit).toHaveBeenCalledWith({
-      key: 'temporary-business-diagnostic'
-    });
-  });
-
-  it('runs every temporary business check and returns all booleans after a partial failure', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        code: 0, tenant_access_token: 'tenant-token', expire: 7200
-      })))
-      .mockResolvedValueOnce(new Response(JSON.stringify({
-        code: 1254003, msg: 'sensitive upstream details'
-      })))
-      .mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
-        code: 0, data: { items: [], has_more: false }
-      }))));
-
-    const response = await worker.fetch(request('/api/health/business-diagnostic', {
-      withOrigin: false
-    }), env);
-    const body = await response.json();
-
-    expect(response.status).toBe(503);
-    expect(body.data).toEqual({
-      customers: false,
-      suppliers: true,
-      products: true,
-      filteredOrders: true,
-      multiStatusOrders: true,
-      datedOrders: true,
-      datedPurchases: true,
-      homeStats: true
-    });
-    expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/records'))).toHaveLength(9);
-    expect(JSON.stringify(body)).not.toMatch(/sensitive upstream details|tenant-token|record|table|secret|base/);
-  });
-
-  it('globally rate limits the temporary public diagnostic before any Feishu call', async () => {
-    env.LOGIN_RATE_LIMITER.limit.mockResolvedValue({ success: false });
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
-
-    const response = await worker.fetch(request('/api/health/business-diagnostic', {
-      withOrigin: false
-    }), env);
-
-    expect(response.status).toBe(429);
-    await expect(response.json()).resolves.toMatchObject({
-      code: 429,
-      message: '诊断请求过于频繁'
-    });
-    expect(env.LOGIN_RATE_LIMITER.limit).toHaveBeenCalledWith({
-      key: 'temporary-business-diagnostic'
-    });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
