@@ -3,6 +3,7 @@ import {
   STATUS_TO_FEISHU,
   dateFromFeishu,
   orderFromFeishu,
+  statusFromFeishu,
   statusToFeishu,
   todayInShanghai
 } from '../field-mappers.js';
@@ -120,14 +121,27 @@ export function createOrdersService(feishu, env) {
 
   async function list(filters = {}) {
     const conditions = [];
+    let requestedStatuses = [];
     if (filters.customer) conditions.push(condition(FIELDS.orders.customer, 'is', filters.customer));
     if (filters.status) {
-      const statuses = String(filters.status).split(',').map(statusToFeishu).filter(Boolean);
-      if (statuses.length === 1) conditions.push(condition(FIELDS.orders.status, 'is', statuses[0]));
-      if (statuses.length > 1) conditions.push(condition(FIELDS.orders.status, 'isAnyOf', statuses));
+      requestedStatuses = String(filters.status)
+        .split(',')
+        .map((status) => statusFromFeishu(status.trim()))
+        .filter(Boolean);
+      if (requestedStatuses.length === 1) {
+        conditions.push(condition(
+          FIELDS.orders.status,
+          'is',
+          statusToFeishu(requestedStatuses[0])
+        ));
+      }
     }
-    const orders = (await feishu.listAllRecords(tableId, andFilter(conditions))).map(orderFromFeishu);
-    return filters.date ? orders.filter((order) => order.date === filters.date) : orders;
+    let orders = (await feishu.listAllRecords(tableId, andFilter(conditions))).map(orderFromFeishu);
+    if (filters.date) orders = orders.filter((order) => order.date === filters.date);
+    if (requestedStatuses.length > 1) {
+      orders = orders.filter((order) => requestedStatuses.includes(order.status));
+    }
+    return orders;
   }
 
   async function createPreorder(input) {

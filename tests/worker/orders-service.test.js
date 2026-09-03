@@ -146,6 +146,29 @@ describe('orders service', () => {
     });
   });
 
+  it('filters multiple statuses locally while keeping the customer filter remote', async () => {
+    const client = fakeOrdersClient([
+      orderRecord('XSD20260823001', '甲客户', '未开单'),
+      orderRecord('XSD20260823002', '甲客户', '未结算'),
+      orderRecord('XSD20260823003', '甲客户', '已结算'),
+      orderRecord('XSD20260823004', '甲客户', '已发货'),
+      orderRecord('XSD20260823005', '乙客户', '未开单')
+    ]);
+    const service = createOrdersService(client, ordersEnv);
+
+    const result = await service.list({
+      customer: '甲客户',
+      status: 'pending_bill,unsettled,settled'
+    });
+
+    expect(result.map((order) => order.id)).toEqual([
+      'XSD20260823001', 'XSD20260823002', 'XSD20260823003'
+    ]);
+    expect(client.calls.list[0].filter).toEqual({
+      field_name: '客户', operator: 'is', value: ['甲客户']
+    });
+  });
+
   it('rejects allocation after the daily sequence reaches 999', () => {
     expect(() => nextDocumentId('XSD', '2026-08-23', ['XSD20260823999']))
       .toThrow('当日单据数量已达到上限');

@@ -134,13 +134,14 @@ describe('authenticated Worker router', () => {
       suppliers: true,
       products: true,
       filteredOrders: true,
+      multiStatusOrders: true,
       datedOrders: true,
       datedPurchases: true,
       homeStats: true
     });
     expect(JSON.stringify(body)).not.toMatch(/tenant-token|items|record|table|secret|base/);
     const recordCalls = fetchSpy.mock.calls.filter(([url]) => String(url).includes('/records'));
-    expect(recordCalls).toHaveLength(8);
+    expect(recordCalls).toHaveLength(9);
     expect(recordCalls.filter(([url, options]) =>
       String(url).endsWith('/search?page_size=500') && options.method === 'POST'
     )).toHaveLength(1);
@@ -173,11 +174,12 @@ describe('authenticated Worker router', () => {
       suppliers: true,
       products: true,
       filteredOrders: true,
+      multiStatusOrders: true,
       datedOrders: true,
       datedPurchases: true,
       homeStats: true
     });
-    expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/records'))).toHaveLength(8);
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/records'))).toHaveLength(9);
     expect(JSON.stringify(body)).not.toMatch(/sensitive upstream details|tenant-token|record|table|secret|base/);
   });
 

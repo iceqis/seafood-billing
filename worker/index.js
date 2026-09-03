@@ -103,7 +103,8 @@ async function checkBusinessReads(env) {
     ['customers', () => services.customers.list()],
     ['suppliers', () => services.suppliers.list()],
     ['products', () => services.products.list()],
-    ['filteredOrders', () => services.orders.list({ status: 'pending_bill,unsettled,settled' })],
+    ['filteredOrders', () => services.orders.list({ status: 'pending_bill' })],
+    ['multiStatusOrders', () => services.orders.list({ status: 'pending_bill,unsettled,settled' })],
     ['datedOrders', () => services.orders.list({ date })],
     ['datedPurchases', () => services.purchases.list({ date })],
     ['homeStats', () => services.statistics.home(date)]
