@@ -1,8 +1,10 @@
 import {
   FIELDS,
   STATUS_TO_FEISHU,
+  dateFromFeishu,
   orderFromFeishu,
-  statusToFeishu
+  statusToFeishu,
+  todayInShanghai
 } from '../field-mappers.js';
 import { FeishuError } from '../feishu-client.js';
 import {
@@ -48,12 +50,14 @@ export function nextDocumentId(prefix, date, existingIds) {
 }
 
 export async function allocateDocumentId(feishu, tableId, prefix, date, idField, dateField) {
-  const dateFilter = condition(dateField, 'is', date);
-  const initialRecords = await feishu.listAllRecords(tableId, dateFilter);
+  const recordsForDate = (records) => records.filter(
+    (record) => dateFromFeishu(record.fields?.[dateField]) === date
+  );
+  const initialRecords = recordsForDate(await feishu.listAllRecords(tableId));
   let candidate = nextDocumentId(prefix, date, initialRecords.map((record) => record.fields?.[idField] ?? ''));
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
-    const freshRecords = await feishu.listAllRecords(tableId, dateFilter);
+    const freshRecords = recordsForDate(await feishu.listAllRecords(tableId));
     const freshIds = freshRecords.map((record) => record.fields?.[idField] ?? '');
     if (!freshIds.includes(candidate)) return candidate;
     candidate = nextDocumentId(prefix, date, freshIds);
@@ -116,21 +120,21 @@ export function createOrdersService(feishu, env) {
 
   async function list(filters = {}) {
     const conditions = [];
-    if (filters.date) conditions.push(condition(FIELDS.orders.date, 'is', filters.date));
     if (filters.customer) conditions.push(condition(FIELDS.orders.customer, 'is', filters.customer));
     if (filters.status) {
       const statuses = String(filters.status).split(',').map(statusToFeishu).filter(Boolean);
       if (statuses.length === 1) conditions.push(condition(FIELDS.orders.status, 'is', statuses[0]));
       if (statuses.length > 1) conditions.push(condition(FIELDS.orders.status, 'isAnyOf', statuses));
     }
-    return (await feishu.listAllRecords(tableId, andFilter(conditions))).map(orderFromFeishu);
+    const orders = (await feishu.listAllRecords(tableId, andFilter(conditions))).map(orderFromFeishu);
+    return filters.date ? orders.filter((order) => order.date === filters.date) : orders;
   }
 
   async function createPreorder(input) {
     if (!input?.customer || !input?.spec || !input?.orderWeight) {
       throw new ValidationError('客户、规格、报货重量不能为空');
     }
-    const date = input.date ? validateDate(input.date) : new Date().toISOString().split('T')[0];
+    const date = input.date ? validateDate(input.date) : todayInShanghai();
     const customer = validateRequiredText(input.customer, '客户');
     const spec = validateRequiredText(input.spec, '规格');
     const orderWeight = validatePositiveNumber(input.orderWeight, '报货重量');

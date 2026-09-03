@@ -3,14 +3,15 @@ import { createStatisticsService } from '../../worker/services/statistics.js';
 
 describe('statistics service', () => {
   it('sums every record returned by the paginated client', async () => {
+    const todayTimestamp = Date.parse('2026-08-23T00:00:00+08:00');
     const orders = [
-      { record_id: 'o1', fields: { 日期: '2026-08-23', 金额: 100, 状态: '未结算' } },
+      { record_id: 'o1', fields: { 日期: todayTimestamp, 金额: 100, 状态: '未结算' } },
       { record_id: 'o2', fields: { 日期: '2026-08-23', 金额: 220, 状态: '已结算' } },
       { record_id: 'o3', fields: { 日期: '2026-08-23', 金额: 500, 状态: '未开单' } },
       { record_id: 'o4', fields: { 日期: '2026-08-01', 金额: 80, 状态: '已结算' } }
     ];
     const purchases = [
-      { record_id: 'p1', fields: { 日期: '2026-08-23', 金额: 80 } }
+      { record_id: 'p1', fields: { 日期: todayTimestamp, 金额: 80 } }
     ];
     const feishu = {
       listAllRecords: async (tableId) => tableId === 'orders' ? orders : purchases

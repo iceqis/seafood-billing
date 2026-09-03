@@ -7,15 +7,38 @@ import {
   PURCHASE_FIELDS,
   SUPPLIER_FIELDS,
   customerFromFeishu,
+  dateFromFeishu,
   orderFromFeishu,
   productFromFeishu,
   purchaseFromFeishu,
   statusFromFeishu,
   statusToFeishu,
-  supplierFromFeishu
+  supplierFromFeishu,
+  todayInShanghai
 } from '../../worker/field-mappers.js';
 
 describe('field mappers', () => {
+  it('normalizes Feishu text and timestamp dates in the Shanghai timezone', () => {
+    const milliseconds = Date.parse('2026-08-23T00:00:00+08:00');
+    expect(dateFromFeishu('2026-08-23')).toBe('2026-08-23');
+    expect(dateFromFeishu('2026-08-23T12:30:00+08:00')).toBe('2026-08-23');
+    expect(dateFromFeishu(milliseconds)).toBe('2026-08-23');
+    expect(dateFromFeishu(String(milliseconds))).toBe('2026-08-23');
+    expect(dateFromFeishu(Math.floor(milliseconds / 1000))).toBe('2026-08-23');
+    expect(dateFromFeishu(null)).toBe('');
+    expect(dateFromFeishu({ timestamp: milliseconds })).toBe('');
+  });
+
+  it('converts ISO instants into Shanghai calendar dates and rejects invalid dates', () => {
+    expect(dateFromFeishu('2026-08-22T16:30:00Z')).toBe('2026-08-23');
+    expect(dateFromFeishu('2026-08-23T00:30:00+09:00')).toBe('2026-08-22');
+    expect(dateFromFeishu('2026-02-30')).toBe('');
+    expect(dateFromFeishu('2026-99-99T00:00:00Z')).toBe('');
+    expect(dateFromFeishu('2026-02-30T00:00:00Z')).toBe('');
+    expect(dateFromFeishu('2025-02-29T00:00:00+08:00')).toBe('');
+    expect(todayInShanghai(Date.parse('2026-08-22T16:30:00Z'))).toBe('2026-08-23');
+  });
+
   it.each([
     ['待发货', 'pending_ship'],
     ['已发货', 'shipped'],
@@ -76,11 +99,12 @@ describe('field mappers', () => {
   });
 
   it('normalizes a Feishu order record', () => {
+    const date = Date.parse('2026-08-23T00:00:00+08:00');
     const order = orderFromFeishu({
       record_id: 'rec1',
       fields: {
         订单编号: 'XSD20260823001',
-        日期: '2026-08-23',
+        日期: date,
         客户: '测试客户',
         商品: '基围虾',
         规格: '30头',
@@ -94,6 +118,7 @@ describe('field mappers', () => {
     });
     expect(order).toMatchObject({
       id: 'XSD20260823001',
+      date: '2026-08-23',
       status: 'unsettled',
       amount: 220
     });
@@ -130,7 +155,7 @@ describe('field mappers', () => {
       record_id: 'purchase-record',
       fields: {
         进货单号: 'CGD20260823001',
-        日期: '2026-08-23',
+        日期: Date.parse('2026-08-23T00:00:00+08:00'),
         供应商: '供应商甲',
         商品: '基围虾',
         规格: '30头',

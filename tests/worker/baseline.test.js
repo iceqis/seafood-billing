@@ -183,7 +183,14 @@ describe('worker production baseline', () => {
 
     expect(response.status).toBe(200);
     expect(body.data[0].status).toBe('unsettled');
-    expect(decodeURIComponent(fetchSpy.mock.calls[1][0])).toContain('"状态","operator":"is","value":["未结算"]');
+    expect(String(fetchSpy.mock.calls[1][0])).toContain('/records/search?page_size=500');
+    expect(fetchSpy.mock.calls[1][1].method).toBe('POST');
+    expect(JSON.parse(fetchSpy.mock.calls[1][1].body)).toEqual({
+      filter: {
+        conjunction: 'and',
+        conditions: [{ field_name: '状态', operator: 'is', value: ['未结算'] }]
+      }
+    });
   });
 
   it('creates an order with a Chinese Feishu status and returns an English API status', async () => {

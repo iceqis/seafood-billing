@@ -2,7 +2,7 @@
 // 作用：精确路由业务请求，并通过服务层访问现有 5 张飞书表
 
 import { FeishuError, createFeishuClient } from './feishu-client.js';
-import { statusFromFeishu } from './field-mappers.js';
+import { statusFromFeishu, todayInShanghai } from './field-mappers.js';
 import { corsHeaders, errorResponse, jsonResponse } from './response.js';
 import {
   TOKEN_TTL_SECONDS,
@@ -37,6 +37,7 @@ const REQUIRED_ENV = Object.freeze([
 ]);
 
 const MAX_LOGIN_BODY_BYTES = 4096;
+const DIAGNOSTIC_RATE_LIMIT_KEY = 'temporary-business-diagnostic';
 
 const DATA_SOURCE_TABLES = Object.freeze({
   customers: 'TABLE_CUSTOMERS',
@@ -47,7 +48,7 @@ const DATA_SOURCE_TABLES = Object.freeze({
 });
 
 function getToday() {
-  return new Date().toISOString().split('T')[0];
+  return todayInShanghai();
 }
 
 function successResponse(data) {
@@ -92,6 +93,42 @@ function createServices(feishu, env) {
     purchases: createPurchasesService(feishu, env),
     statistics: createStatisticsService(feishu, env)
   };
+}
+
+async function checkBusinessReads(env) {
+  assertEnvironment(env);
+  const services = createServices(createFeishuClient(env), env);
+  const date = getToday();
+  const checks = [
+    ['customers', () => services.customers.list()],
+    ['suppliers', () => services.suppliers.list()],
+    ['products', () => services.products.list()],
+    ['filteredOrders', () => services.orders.list({ status: 'pending_bill,unsettled,settled' })],
+    ['datedOrders', () => services.orders.list({ date })],
+    ['datedPurchases', () => services.purchases.list({ date })],
+    ['homeStats', () => services.statistics.home(date)]
+  ];
+  const availability = {};
+  for (const [name, check] of checks) {
+    try {
+      await check();
+      availability[name] = true;
+    } catch {
+      availability[name] = false;
+    }
+  }
+  return availability;
+}
+
+async function checkBusinessDiagnosticRateLimit(env) {
+  try {
+    if (typeof env.LOGIN_RATE_LIMITER?.limit !== 'function') return false;
+    const result = await env.LOGIN_RATE_LIMITER.limit({ key: DIAGNOSTIC_RATE_LIMIT_KEY });
+    return result?.success === true;
+  } catch {
+    console.error({ event: 'business_diagnostic_rate_limiter_unavailable' });
+    return false;
+  }
 }
 
 async function readJsonBody(request) {
@@ -360,6 +397,10 @@ function responseForError(error) {
     });
     return errorResponse(error.message, 502);
   }
+  console.error({
+    event: 'unhandled_request_error',
+    errorName: error instanceof Error ? error.name : 'UnknownError'
+  });
   return errorResponse('服务器内部错误', 500);
 }
 
@@ -393,6 +434,18 @@ export default {
             service: 'seafood-billing-api'
           }
         });
+      } else if (url.pathname === '/api/health/business-diagnostic' && request.method === 'GET') {
+        if (!await checkBusinessDiagnosticRateLimit(env)) {
+          response = withHeaders(errorResponse('诊断请求过于频繁', 429), { 'Retry-After': '60' });
+        } else {
+          const availability = await checkBusinessReads(env);
+          const healthy = Object.values(availability).every(Boolean);
+          response = jsonResponse({
+            code: healthy ? 0 : 503,
+            message: healthy ? 'success' : 'business diagnostic failed',
+            data: availability
+          }, healthy ? 200 : 503);
+        }
       } else if (url.pathname === '/api/auth/challenge' && request.method === 'GET') {
         response = origin
           ? successResponse(await issueLoginChallenge(env))

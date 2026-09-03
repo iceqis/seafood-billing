@@ -125,6 +125,27 @@ describe('orders service', () => {
     ])).toBe('XSD20260823008');
   });
 
+  it('filters timestamp dates locally while preserving non-date remote filters', async () => {
+    const targetDate = Date.parse('2026-08-23T00:00:00+08:00');
+    const client = fakeOrdersClient([
+      orderRecord('XSD20260823001', '甲客户', '未开单', { 日期: targetDate }),
+      orderRecord('XSD20260822001', '甲客户', '未开单', { 日期: '2026-08-22' }),
+      orderRecord('XSD20260823002', '乙客户', '未开单', { 日期: targetDate })
+    ]);
+    const service = createOrdersService(client, ordersEnv);
+
+    await expect(service.list({
+      date: '2026-08-23', customer: '甲客户', status: 'pending_bill'
+    })).resolves.toMatchObject([{ id: 'XSD20260823001', date: '2026-08-23' }]);
+    expect(client.calls.list[0].filter).toEqual({
+      conjunction: 'and',
+      conditions: [
+        { field_name: '客户', operator: 'is', value: ['甲客户'] },
+        { field_name: '状态', operator: 'is', value: ['未开单'] }
+      ]
+    });
+  });
+
   it('rejects allocation after the daily sequence reaches 999', () => {
     expect(() => nextDocumentId('XSD', '2026-08-23', ['XSD20260823999']))
       .toThrow('当日单据数量已达到上限');

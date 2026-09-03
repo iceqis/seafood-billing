@@ -120,7 +120,7 @@ describe('Feishu client', () => {
     expect(String(error)).not.toContain('secret-token');
   });
 
-  it('reads every page and carries filter, page size, and page token', async () => {
+  it('searches every filtered page with the documented POST body and pagination query', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(response({ code: 0, tenant_access_token: 'token', expire: 7200 }))
       .mockResolvedValueOnce(response({
@@ -136,12 +136,35 @@ describe('Feishu client', () => {
     const records = await createFeishuClient(env, fetchMock).listAllRecords('table', filter);
 
     expect(records.map((item) => item.record_id)).toEqual(['1', '2']);
-    const firstUrl = new URL(fetchMock.mock.calls[1][0]);
-    const secondUrl = new URL(fetchMock.mock.calls[2][0]);
+    const [firstRequest, secondRequest] = fetchMock.mock.calls.slice(1);
+    const firstUrl = new URL(firstRequest[0]);
+    const secondUrl = new URL(secondRequest[0]);
+    expect(firstUrl.pathname.endsWith('/records/search')).toBe(true);
     expect(firstUrl.searchParams.get('page_size')).toBe('500');
-    expect(firstUrl.searchParams.get('filter')).toBe(JSON.stringify(filter));
+    expect(firstUrl.searchParams.has('filter')).toBe(false);
+    expect(firstRequest[1].method).toBe('POST');
+    expect(firstRequest[1].headers['Content-Type']).toBe('application/json');
+    expect(JSON.parse(firstRequest[1].body)).toEqual({
+      filter: { conjunction: 'and', conditions: [filter] }
+    });
     expect(secondUrl.searchParams.get('page_token')).toBe('next');
-    expect(secondUrl.searchParams.get('filter')).toBe(JSON.stringify(filter));
+    expect(secondRequest[1].method).toBe('POST');
+    expect(JSON.parse(secondRequest[1].body)).toEqual({
+      filter: { conjunction: 'and', conditions: [filter] }
+    });
+  });
+
+  it('keeps unfiltered record listing on GET without a request body', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(response({ code: 0, tenant_access_token: 'token', expire: 7200 }))
+      .mockResolvedValueOnce(response({ code: 0, data: { items: [], has_more: false } }));
+
+    await createFeishuClient(env, fetchMock).listAllRecords('table');
+
+    const [url, options] = fetchMock.mock.calls[1];
+    expect(new URL(url).pathname.endsWith('/records')).toBe(true);
+    expect(options.method).toBe('GET');
+    expect(options.body).toBeUndefined();
   });
 
   it.each([

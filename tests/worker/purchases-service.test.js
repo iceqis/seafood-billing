@@ -113,4 +113,22 @@ describe('purchases service', () => {
     await expect(service.remove('CGD20260823001')).resolves.toBeNull();
     expect(removed).toEqual(['rec_CGD20260823001']);
   });
+
+  it('filters numeric Feishu dates after mapping without a remote date condition', async () => {
+    const calls = [];
+    const feishu = {
+      listAllRecords: async (_tableId, filter) => {
+        calls.push(filter);
+        return [
+          purchaseRecord('CGD20260823001', Date.parse('2026-08-23T00:00:00+08:00')),
+          purchaseRecord('CGD20260822001', '2026-08-22')
+        ];
+      }
+    };
+    const service = createPurchasesService(feishu, { TABLE_PURCHASES: 'purchases' });
+
+    await expect(service.list({ date: '2026-08-23' }))
+      .resolves.toMatchObject([{ id: 'CGD20260823001', date: '2026-08-23' }]);
+    expect(calls).toEqual([undefined]);
+  });
 });

@@ -74,6 +74,12 @@ export function createFeishuClient(env, fetchImpl = fetch, { sleepImpl = default
     return `${FEISHU_API_BASE}/bitable/v1/apps/${env.FEISHU_BASE_TOKEN}/tables/${tableId}/records${suffix}`;
   }
 
+  function normalizeFilter(filter) {
+    if (!filter) return null;
+    if (Array.isArray(filter.conditions)) return filter;
+    return { conjunction: 'and', conditions: [filter] };
+  }
+
   function shouldRetryRead(error) {
     if (!(error instanceof FeishuError)) return true;
     if (Number.isInteger(error.upstreamCode)) {
@@ -85,11 +91,15 @@ export function createFeishuClient(env, fetchImpl = fetch, { sleepImpl = default
     return error.message === '读取飞书数据失败';
   }
 
-  async function readRecordsBody(url) {
+  async function readRecordsBody(url, requestOptions = {}) {
     for (let attempt = 0; ; attempt += 1) {
       try {
         const response = await withFeishuError('读取飞书数据失败', async () => fetchImpl(url, {
-          headers: { Authorization: `Bearer ${await getTenantToken()}` }
+          ...requestOptions,
+          headers: {
+            ...requestOptions.headers,
+            Authorization: `Bearer ${await getTenantToken()}`
+          }
         }));
         const body = await readBody(response, '读取飞书数据失败');
         if (body.code !== 0) {
@@ -113,12 +123,19 @@ export function createFeishuClient(env, fetchImpl = fetch, { sleepImpl = default
     const seenPageTokens = new Set();
 
     do {
-      const url = new URL(recordsUrl(tableId));
+      const normalizedFilter = normalizeFilter(filter);
+      const url = new URL(normalizedFilter ? `${recordsUrl(tableId)}/search` : recordsUrl(tableId));
       url.searchParams.set('page_size', '500');
       if (pageToken) url.searchParams.set('page_token', pageToken);
-      if (filter) url.searchParams.set('filter', JSON.stringify(filter));
+      const requestOptions = normalizedFilter
+        ? {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filter: normalizedFilter })
+          }
+        : { method: 'GET' };
 
-      const body = await readRecordsBody(url);
+      const body = await readRecordsBody(url, requestOptions);
 
       items.push(...(body.data?.items ?? []));
       if (body.data?.has_more) {

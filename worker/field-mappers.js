@@ -65,6 +65,55 @@ export function statusFromFeishu(status) {
   return Object.entries(STATUS_TO_FEISHU).find(([, value]) => value === status)?.[0] ?? status;
 }
 
+const SHANGHAI_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'Asia/Shanghai',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit'
+});
+
+function formatShanghaiDate(date) {
+  if (Number.isNaN(date.getTime())) return '';
+  const parts = Object.fromEntries(
+    SHANGHAI_DATE_FORMATTER.formatToParts(date).map(({ type, value }) => [type, value])
+  );
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function isValidCalendarDate(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const [, year, month, day] = match.map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day;
+}
+
+export function dateFromFeishu(value) {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return isValidCalendarDate(trimmed) ? trimmed : '';
+    const isoCalendarPrefix = /^(\d{4}-\d{2}-\d{2})T/.exec(trimmed)?.[1];
+    if (isoCalendarPrefix && !isValidCalendarDate(isoCalendarPrefix)) return '';
+    if (/^\d{10}(?:\.\d+)?$/.test(trimmed)) {
+      return formatShanghaiDate(new Date(Number(trimmed) * 1000));
+    }
+    if (/^\d{13}$/.test(trimmed)) return formatShanghaiDate(new Date(Number(trimmed)));
+    if (trimmed) return formatShanghaiDate(new Date(trimmed));
+    return '';
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const milliseconds = Math.abs(value) < 1e12 ? value * 1000 : value;
+    return formatShanghaiDate(new Date(milliseconds));
+  }
+  return '';
+}
+
+export function todayInShanghai(nowMs = Date.now()) {
+  return dateFromFeishu(nowMs);
+}
+
 export function customerFromFeishu(item) {
   const fields = item.fields ?? {};
   return {
@@ -102,7 +151,7 @@ export function orderFromFeishu(item) {
   return {
     recordId: item.record_id,
     id: fields[ORDER_FIELDS.id] ?? '',
-    date: fields[ORDER_FIELDS.date] ?? '',
+    date: dateFromFeishu(fields[ORDER_FIELDS.date]),
     customer: fields[ORDER_FIELDS.customer] ?? '',
     product: fields[ORDER_FIELDS.product] ?? '',
     spec: fields[ORDER_FIELDS.spec] ?? '',
@@ -122,7 +171,7 @@ export function purchaseFromFeishu(item) {
   return {
     recordId: item.record_id,
     id: fields[PURCHASE_FIELDS.id] ?? '',
-    date: fields[PURCHASE_FIELDS.date] ?? '',
+    date: dateFromFeishu(fields[PURCHASE_FIELDS.date]),
     supplier: fields[PURCHASE_FIELDS.supplier] ?? '',
     product: fields[PURCHASE_FIELDS.product] ?? '',
     spec: fields[PURCHASE_FIELDS.spec] ?? '',

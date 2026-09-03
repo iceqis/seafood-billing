@@ -56,4 +56,29 @@ describe('customer billing selection', () => {
     expect(text).toContain('实际重量 2斤'); expect(text).toContain('单价 ¥10.00'); expect(text).toContain('金额 ¥20.00');
     expect(text).toContain('<script>客户</script>'); expect(text).toContain('<img>商品'); expect(document.querySelector('#customer-orders-list script')).toBeNull();
   });
+
+  it('does not misreport or repeat a successful customer write when the refresh fails', async () => {
+    document.body.innerHTML = '<input id="customer-search"><div id="customers-list"></div><div id="customer-orders-name"></div><div id="customer-orders-list"></div><div id="billing-bar"></div><span id="selected-count"></span><span id="selected-amount"></span><button id="btn-unified-bill"></button><button id="btn-settle-selected"></button><section id="page-customers"><div class="card-header"><button class="btn">添加客户</button></div></section><section id="page-customer-orders"><button class="back-btn"></button></section><div id="loading-overlay"></div><div id="modal-overlay"><h2 id="modal-title"></h2><div id="modal-body"></div><div id="modal-footer"></div></div>';
+    const api = {
+      post: vi.fn().mockResolvedValue({ recordId: 'customer-record', name: '新客户' }),
+      get: vi.fn().mockRejectedValue(new Error('读取飞书数据失败'))
+    };
+    const showToast = vi.fn();
+    createCustomersPage({ api, showToast, navigate: vi.fn() });
+
+    document.querySelector('#page-customers .card-header .btn').click();
+    const inputs = document.querySelectorAll('#modal-body input');
+    inputs[0].value = '新客户';
+    document.querySelector('#modal-footer .btn-primary').click();
+    await vi.waitFor(() => expect(showToast).toHaveBeenCalledWith(
+      '客户已添加，但列表刷新失败，请刷新页面', 'warning'
+    ));
+
+    expect(api.post).toHaveBeenCalledTimes(1);
+    expect(api.post).toHaveBeenCalledWith('/api/customers', {
+      name: '新客户', phone: '', settlement: '', remark: ''
+    });
+    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(document.getElementById('modal-overlay').classList.contains('show')).toBe(false);
+  });
 });

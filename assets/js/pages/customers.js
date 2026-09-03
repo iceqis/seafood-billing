@@ -82,7 +82,13 @@ export function createCustomersPage(deps) {
     page.showModal('添加客户', body, [
       { label: '取消', className: 'btn btn-secondary', onClick: page.closeModal },
       { label: '确认添加', className: 'btn btn-primary', onClick: async () => {
-        await page.api.post('/api/customers', { name: name.input.value.trim(), phone: phone.input.value.trim(), settlement: settlement.input.value.trim(), remark: remark.input.value.trim() }); page.closeModal(); await load();
+        await page.api.post('/api/customers', { name: name.input.value.trim(), phone: phone.input.value.trim(), settlement: settlement.input.value.trim(), remark: remark.input.value.trim() });
+        page.closeModal();
+        try {
+          await load();
+        } catch {
+          page.showToast?.('客户已添加，但列表刷新失败，请刷新页面', 'warning');
+        }
       } }
     ]);
   }

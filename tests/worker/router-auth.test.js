@@ -114,6 +114,92 @@ describe('authenticated Worker router', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it('temporarily verifies real business reads without returning records or performing writes', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 0, tenant_access_token: 'tenant-token', expire: 7200
+      })))
+      .mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
+        code: 0, data: { items: [], has_more: false }
+      }))));
+
+    const response = await worker.fetch(request('/api/health/business-diagnostic', {
+      withOrigin: false
+    }), env);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data).toEqual({
+      customers: true,
+      suppliers: true,
+      products: true,
+      filteredOrders: true,
+      datedOrders: true,
+      datedPurchases: true,
+      homeStats: true
+    });
+    expect(JSON.stringify(body)).not.toMatch(/tenant-token|items|record|table|secret|base/);
+    const recordCalls = fetchSpy.mock.calls.filter(([url]) => String(url).includes('/records'));
+    expect(recordCalls).toHaveLength(8);
+    expect(recordCalls.filter(([url, options]) =>
+      String(url).endsWith('/search?page_size=500') && options.method === 'POST'
+    )).toHaveLength(1);
+    expect(recordCalls.every(([, options]) => ['GET', 'POST'].includes(options.method))).toBe(true);
+    expect(env.LOGIN_RATE_LIMITER.limit).toHaveBeenCalledWith({
+      key: 'temporary-business-diagnostic'
+    });
+  });
+
+  it('runs every temporary business check and returns all booleans after a partial failure', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 0, tenant_access_token: 'tenant-token', expire: 7200
+      })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        code: 1254003, msg: 'sensitive upstream details'
+      })))
+      .mockImplementation(() => Promise.resolve(new Response(JSON.stringify({
+        code: 0, data: { items: [], has_more: false }
+      }))));
+
+    const response = await worker.fetch(request('/api/health/business-diagnostic', {
+      withOrigin: false
+    }), env);
+    const body = await response.json();
+
+    expect(response.status).toBe(503);
+    expect(body.data).toEqual({
+      customers: false,
+      suppliers: true,
+      products: true,
+      filteredOrders: true,
+      datedOrders: true,
+      datedPurchases: true,
+      homeStats: true
+    });
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url).includes('/records'))).toHaveLength(8);
+    expect(JSON.stringify(body)).not.toMatch(/sensitive upstream details|tenant-token|record|table|secret|base/);
+  });
+
+  it('globally rate limits the temporary public diagnostic before any Feishu call', async () => {
+    env.LOGIN_RATE_LIMITER.limit.mockResolvedValue({ success: false });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+    const response = await worker.fetch(request('/api/health/business-diagnostic', {
+      withOrigin: false
+    }), env);
+
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 429,
+      message: '诊断请求过于频繁'
+    });
+    expect(env.LOGIN_RATE_LIMITER.limit).toHaveBeenCalledWith({
+      key: 'temporary-business-diagnostic'
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('rejects a denied Origin with 403 before authentication or Feishu', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const response = await worker.fetch(request('/api/orders', {
@@ -382,6 +468,32 @@ describe('authenticated Worker router', () => {
       upstreamStatus: 200
     });
     expect(JSON.stringify(errorSpy.mock.calls)).not.toMatch(/tenant-token|sensitive upstream details|secret|base/);
+  });
+
+  it('logs only the error category for an unexpected internal failure', async () => {
+    const token = await issueToken(AUTH_SECRET);
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const response = await worker.fetch(request('/api/customers', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: '{'
+    }), env);
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({
+      code: 500,
+      message: '服务器内部错误'
+    });
+    expect(errorSpy).toHaveBeenCalledOnce();
+    expect(errorSpy).toHaveBeenCalledWith({
+      event: 'unhandled_request_error',
+      errorName: 'SyntaxError'
+    });
+    expect(JSON.stringify(errorSpy.mock.calls)).not.toMatch(/AUTH_SECRET|shared-shop-password|secret|base/);
   });
 
   it('protects the data-source health check and returns only five availability booleans', async () => {
