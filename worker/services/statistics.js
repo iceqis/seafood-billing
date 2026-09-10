@@ -9,6 +9,32 @@ function isSale(order) {
   return order.status === 'unsettled' || order.status === 'settled';
 }
 
+export function buildYearTrend(orders, purchases, date) {
+  const year = date.substring(0, 4);
+  const monthCount = Number(date.substring(5, 7));
+  const trend = Array.from({ length: monthCount }, (_, index) => ({
+    month: `${year}-${String(index + 1).padStart(2, '0')}`,
+    sales: 0,
+    purchases: 0
+  }));
+  const byMonth = new Map(trend.map((entry) => [entry.month, entry]));
+
+  for (const order of orders) {
+    const entry = byMonth.get(order.date.substring(0, 7));
+    if (entry && isSale(order)) entry.sales += order.amount;
+  }
+  for (const purchase of purchases) {
+    const entry = byMonth.get(purchase.date.substring(0, 7));
+    if (entry) entry.purchases += purchase.amount;
+  }
+
+  return trend.map((entry) => ({
+    ...entry,
+    sales: round(entry.sales),
+    purchases: round(entry.purchases)
+  }));
+}
+
 export function createStatisticsService(feishu, env) {
   async function load() {
     const orders = (await feishu.listAllRecords(env.TABLE_ORDERS)).map(orderFromFeishu);
@@ -26,7 +52,8 @@ export function createStatisticsService(feishu, env) {
       todaySales: round(todayOrders.reduce((sum, order) => sum + order.amount, 0)),
       todayDealCount: todayOrders.length,
       todayPurchase: round(todayPurchases.reduce((sum, purchase) => sum + purchase.amount, 0)),
-      monthSales: round(monthOrders.reduce((sum, order) => sum + order.amount, 0))
+      monthSales: round(monthOrders.reduce((sum, order) => sum + order.amount, 0)),
+      yearTrend: buildYearTrend(orders, purchases, date)
     };
   }
 
