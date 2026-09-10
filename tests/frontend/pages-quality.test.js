@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createPageFactory } from '../../assets/js/pages/factory.js';
-import { getHomeDetailConfig, renderHomeDetail } from '../../assets/js/pages/home.js';
+import { createHomePage, getHomeDetailConfig, renderHomeDetail, renderYearTrend } from '../../assets/js/pages/home.js';
 import { createProfilePage } from '../../assets/js/pages/profile.js';
 import { createPurchasesPage } from '../../assets/js/pages/purchases.js';
 
@@ -31,6 +31,47 @@ describe('page quality boundaries', () => {
     expect(container.textContent).toContain('<script>客户</script>');
     expect(container.textContent).toContain('30头');
     expect(container.textContent).toContain('¥20.00');
+  });
+
+  it('renders sales and purchases for every year trend month', () => {
+    const container = document.createElement('div');
+    renderYearTrend(container, [
+      { month: '2026-01', sales: 200, purchases: 100 },
+      { month: '2026-02', sales: 0, purchases: 50 }
+    ]);
+
+    expect(container.textContent).toContain('1月');
+    expect(container.textContent).toContain('销售 ¥200.00');
+    expect(container.textContent).toContain('进货 ¥100.00');
+    expect(container.textContent).not.toContain('暂无经营数据');
+    expect(container.querySelector('[data-series="sales"]').style.width).toBe('100%');
+    expect(container.querySelector('[data-series="purchases"]').style.width).toBe('50%');
+  });
+
+  it('renders an empty year trend for missing or unusable data', () => {
+    const container = document.createElement('div');
+    [undefined, [], [{ month: '2026-01', sales: 0, purchases: 0 }], [{ month: '2026-01', sales: -1, purchases: Number.NaN }]].forEach((trend) => {
+      renderYearTrend(container, trend);
+      expect(container.textContent).toBe('暂无经营数据');
+      expect(container.querySelectorAll('.chart-row')).toHaveLength(0);
+    });
+  });
+
+  it('loads and renders the home year trend from the single stats request', async () => {
+    document.body.innerHTML = '<section id="page-home"><div class="stat-card"></div><div class="stat-card"></div><div class="stat-card"></div><div class="stat-card"></div><div class="quick-card"></div><div id="home-today-sales"></div><div id="home-deal-count"></div><div id="home-today-purchase"></div><div id="home-month-sales"></div><div id="home-year-trend">旧趋势</div></section><section id="page-stat-detail"><button class="back-btn"></button><div id="stat-detail-summary"></div><div id="stat-detail-title"></div><div id="stat-detail-icon"></div><div id="stat-detail-list"></div></section><div id="loading-overlay"></div><div id="loading-text"></div>';
+    let resolveStats;
+    const get = vi.fn(() => new Promise((resolve) => { resolveStats = resolve; }));
+    const page = createHomePage({ api: { get }, today: () => '2026-09-08', navigate: vi.fn() });
+
+    const entered = page.enter();
+    await vi.waitFor(() => expect(get).toHaveBeenCalledWith('/api/stats/home?date=2026-09-08'));
+    expect(document.getElementById('home-year-trend').textContent).toBe('暂无经营数据');
+    resolveStats({ todaySales: 100, todayDealCount: 1, todayPurchase: 20, monthSales: 300, yearTrend: [{ month: '2026-09', sales: 100, purchases: 20 }] });
+    await entered;
+
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(document.getElementById('home-today-sales').textContent).toBe('¥100.00');
+    expect(document.getElementById('home-year-trend').textContent).toContain('9月');
   });
 
   it('uses the correct Chinese summary for each home detail card', () => {
