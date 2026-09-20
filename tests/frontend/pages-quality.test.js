@@ -37,20 +37,29 @@ describe('page quality boundaries', () => {
     const container = document.createElement('div');
     renderYearTrend(container, [
       { month: '2026-01', sales: 200, purchases: 100 },
-      { month: '2026-02', sales: 0, purchases: 50 }
+      { month: '2026-02', sales: 0, purchases: 50 },
+      { month: null, sales: 500, purchases: 500 },
+      { month: '2026-13', sales: 500, purchases: 500 }
     ]);
 
     expect(container.textContent).toContain('1月');
     expect(container.textContent).toContain('销售 ¥200.00');
     expect(container.textContent).toContain('进货 ¥100.00');
     expect(container.textContent).not.toContain('暂无经营数据');
-    expect(container.querySelector('[data-series="sales"]').style.width).toBe('100%');
-    expect(container.querySelector('[data-series="purchases"]').style.width).toBe('50%');
+    expect(container.querySelectorAll('.chart-row')).toHaveLength(2);
+    expect(container.querySelector('.chart-label').textContent).toContain('1月');
+    expect(container.querySelector('.chart-amounts').textContent).toContain('销售 ¥200.00');
+    const salesFills = container.querySelectorAll('[data-series="sales"]');
+    const purchaseFills = container.querySelectorAll('[data-series="purchases"]');
+    expect(salesFills[0].style.width).toBe('100%');
+    expect(purchaseFills[0].style.width).toBe('50%');
+    expect(salesFills[1].style.width).toBe('0%');
+    expect(purchaseFills[1].style.width).toBe('25%');
   });
 
   it('renders an empty year trend for missing or unusable data', () => {
     const container = document.createElement('div');
-    [undefined, [], [{ month: '2026-01', sales: 0, purchases: 0 }], [{ month: '2026-01', sales: -1, purchases: Number.NaN }]].forEach((trend) => {
+    [undefined, [], [{ month: '2026-01', sales: 0, purchases: 0 }], [{ month: '2026-01', sales: -1, purchases: Number.NaN }], [{ month: null, sales: 10, purchases: 20 }], [{ month: '2026-13', sales: 10, purchases: 20 }]].forEach((trend) => {
       renderYearTrend(container, trend);
       expect(container.textContent).toBe('暂无经营数据');
       expect(container.querySelector('.chart-empty').getAttribute('role')).toBe('status');
@@ -66,13 +75,25 @@ describe('page quality boundaries', () => {
 
     const entered = page.enter();
     await vi.waitFor(() => expect(get).toHaveBeenCalledWith('/api/stats/home?date=2026-09-08'));
-    expect(document.getElementById('home-year-trend').textContent).toBe('暂无经营数据');
+    expect(document.getElementById('home-year-trend').textContent).toBe('正在读取真实数据…');
+    expect(document.querySelector('#home-year-trend [role="status"]')).not.toBeNull();
     resolveStats({ todaySales: 100, todayDealCount: 1, todayPurchase: 20, monthSales: 300, yearTrend: [{ month: '2026-09', sales: 100, purchases: 20 }] });
     await entered;
 
     expect(get).toHaveBeenCalledTimes(1);
     expect(document.getElementById('home-today-sales').textContent).toBe('¥100.00');
     expect(document.getElementById('home-year-trend').textContent).toContain('9月');
+  });
+
+  it('shows the empty year trend after a stats response without yearTrend', async () => {
+    document.body.innerHTML = '<section id="page-home"><div class="stat-card"></div><div class="stat-card"></div><div class="stat-card"></div><div class="stat-card"></div><div class="quick-card"></div><div id="home-today-sales"></div><div id="home-deal-count"></div><div id="home-today-purchase"></div><div id="home-month-sales"></div><div id="home-year-trend"></div></section><section id="page-stat-detail"><button class="back-btn"></button><div id="stat-detail-summary"></div><div id="stat-detail-title"></div><div id="stat-detail-icon"></div><div id="stat-detail-list"></div></section><div id="loading-overlay"></div><div id="loading-text"></div>';
+    const get = vi.fn().mockResolvedValue({ todaySales: 100, todayDealCount: 1, todayPurchase: 20, monthSales: 300 });
+    const page = createHomePage({ api: { get }, today: () => '2026-09-08', navigate: vi.fn() });
+
+    await page.enter();
+
+    expect(get).toHaveBeenCalledOnce();
+    expect(document.getElementById('home-year-trend').textContent).toBe('暂无经营数据');
   });
 
   it('uses the correct Chinese summary for each home detail card', () => {

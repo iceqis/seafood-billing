@@ -5,7 +5,7 @@ export function createHomePage(deps) {
   const page = createPageFactory(deps);
   async function enter() {
     const trendContainer = page.byId('home-year-trend');
-    renderYearTrend(trendContainer, []);
+    renderTrendStatus(trendContainer, '正在读取真实数据…', 'chart-status');
     const stats = await page.api.get(`/api/stats/home?date=${page.today()}`) || {};
     page.setText(page.byId('home-today-sales'), page.money(stats.todaySales));
     page.setText(page.byId('home-deal-count'), stats.todayDealCount || 0);
@@ -36,15 +36,23 @@ export function getHomeDetailConfig(type) {
 }
 function pageMoney(value) { return `¥${(Number.isFinite(Number(value)) ? Number(value) : 0).toFixed(2)}`; }
 
-export function trendAmount(value) {
+function trendAmount(value) {
   const amount = Number(value);
   return Number.isFinite(amount) && amount > 0 ? amount : 0;
 }
 
-function trendMonthLabel(month) {
+function trendMonth(month) {
   const match = String(month ?? '').match(/^\d{4}-(\d{2})$/);
   const number = Number(match?.[1]);
-  return number >= 1 && number <= 12 ? `${number}月` : String(month ?? '');
+  return number >= 1 && number <= 12 ? number : null;
+}
+
+function renderTrendStatus(container, text, className = 'chart-empty') {
+  if (!container) return;
+  while (container.firstChild) container.removeChild(container.firstChild);
+  const status = createElement('div', { className }, text);
+  status.setAttribute('role', 'status');
+  container.append(status);
 }
 
 export function renderYearTrend(container, trend) {
@@ -52,22 +60,21 @@ export function renderYearTrend(container, trend) {
   while (container.firstChild) container.removeChild(container.firstChild);
 
   const rows = Array.isArray(trend) ? trend.map((item) => ({
-    month: item?.month,
+    month: trendMonth(item?.month),
     sales: trendAmount(item?.sales),
     purchases: trendAmount(item?.purchases)
-  })) : [];
+  })).filter((item) => item.month !== null) : [];
   const maximum = Math.max(0, ...rows.flatMap((item) => [item.sales, item.purchases]));
   if (!rows.length || maximum === 0) {
-    const empty = createElement('div', { className: 'chart-empty' }, '暂无经营数据');
-    empty.setAttribute('role', 'status');
-    container.append(empty);
+    renderTrendStatus(container, '暂无经营数据');
     return;
   }
 
   rows.forEach((item) => {
     const row = createElement('div', { className: 'chart-row' });
-    row.append(createElement('div', { className: 'chart-month' }, trendMonthLabel(item.month)));
-    row.append(createElement('div', { className: 'chart-values' }, `销售 ¥${item.sales.toFixed(2)} · 进货 ¥${item.purchases.toFixed(2)}`));
+    const label = createElement('div', { className: 'chart-label' }, `${item.month}月`);
+    label.append(createElement('div', { className: 'chart-amounts' }, `销售 ¥${item.sales.toFixed(2)} · 进货 ¥${item.purchases.toFixed(2)}`));
+    row.append(label);
     [['sales', item.sales], ['purchases', item.purchases]].forEach(([series, amount]) => {
       const bar = createElement('div', { className: 'chart-bar' });
       const fill = createElement('div', { className: `chart-fill chart-fill-${series}`, 'data-series': series });
