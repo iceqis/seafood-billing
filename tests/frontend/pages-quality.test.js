@@ -53,6 +53,7 @@ describe('page quality boundaries', () => {
     [undefined, [], [{ month: '2026-01', sales: 0, purchases: 0 }], [{ month: '2026-01', sales: -1, purchases: Number.NaN }]].forEach((trend) => {
       renderYearTrend(container, trend);
       expect(container.textContent).toBe('暂无经营数据');
+      expect(container.querySelector('.chart-empty').getAttribute('role')).toBe('status');
       expect(container.querySelectorAll('.chart-row')).toHaveLength(0);
     });
   });

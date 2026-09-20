@@ -58,7 +58,9 @@ export function renderYearTrend(container, trend) {
   })) : [];
   const maximum = Math.max(0, ...rows.flatMap((item) => [item.sales, item.purchases]));
   if (!rows.length || maximum === 0) {
-    container.append(createElement('div', { className: 'chart-empty', role: 'status' }, '暂无经营数据'));
+    const empty = createElement('div', { className: 'chart-empty' }, '暂无经营数据');
+    empty.setAttribute('role', 'status');
+    container.append(empty);
     return;
   }
 
