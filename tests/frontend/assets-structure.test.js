@@ -62,4 +62,15 @@ describe('frontend extracted assets', () => {
     expect(html).toContain('<title>海鲜批发记账系统 v3.2.0</title>');
     expect(html).toContain('版本 v3.2.0 · 已对接后端API');
   });
+
+  it('keeps the home trend chart data-driven and safe before API data arrives', () => {
+    const html = read('index.html');
+
+    for (const fabricatedValue of ['12,000', '8,500', '15,200', 'width: 60%', 'width: 45%', 'width: 42%', 'width: 38%', 'width: 76%', 'width: 58%']) {
+      expect(html).not.toContain(fabricatedValue);
+    }
+    expect(html).not.toContain('查看更多');
+    expect(html).toContain('id="home-year-trend"');
+    expect(html).toContain('正在读取真实数据…');
+  });
 });

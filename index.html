@@ -121,43 +121,21 @@
 
             <div class="card">
                 <div class="card-header">
-                    <div class="card-title"><span class="icon">📊</span> 销售-进货图表(元)</div>
-                    <button class="btn btn-secondary btn-sm">查看更多</button>
+                    <div class="card-title"><span class="icon">📊</span> 当年销售—进货趋势（元）</div>
                 </div>
                 <div class="card-body">
                     <div class="chart-legend">
                         <div class="legend-item">
-                            <div class="legend-dot" style="background: #0ea5e9"></div>
+                            <div class="legend-dot chart-dot-sales"></div>
                             <span>销售金额</span>
                         </div>
                         <div class="legend-item">
-                            <div class="legend-dot" style="background: #fb923c"></div>
+                            <div class="legend-dot chart-dot-purchases"></div>
                             <span>进货金额</span>
                         </div>
                     </div>
-                    <div class="chart-row">
-                        <div class="chart-label">
-                            <span>1月</span>
-                            <span class="font-semibold">¥12,000</span>
-                        </div>
-                        <div class="chart-bar"><div class="chart-fill" style="width: 60%; background: #0ea5e9"></div></div>
-                        <div class="chart-bar"><div class="chart-fill" style="width: 45%; background: #fb923c"></div></div>
-                    </div>
-                    <div class="chart-row">
-                        <div class="chart-label">
-                            <span>2月</span>
-                            <span class="font-semibold">¥8,500</span>
-                        </div>
-                        <div class="chart-bar"><div class="chart-fill" style="width: 42%; background: #0ea5e9"></div></div>
-                        <div class="chart-bar"><div class="chart-fill" style="width: 38%; background: #fb923c"></div></div>
-                    </div>
-                    <div class="chart-row">
-                        <div class="chart-label">
-                            <span>3月</span>
-                            <span class="font-semibold">¥15,200</span>
-                        </div>
-                        <div class="chart-bar"><div class="chart-fill" style="width: 76%; background: #0ea5e9"></div></div>
-                        <div class="chart-bar"><div class="chart-fill" style="width: 58%; background: #fb923c"></div></div>
+                    <div id="home-year-trend">
+                        <div class="chart-status" role="status">正在读取真实数据…</div>
                     </div>
                 </div>
             </div>

@@ -34,3 +34,14 @@
                 border-radius: 18px 18px 0 0;
             }
         }
+
+@media (max-width: 767px) {
+            .chart-label {
+                align-items: flex-start;
+                gap: 8px;
+            }
+            .chart-amounts {
+                max-width: 75%;
+                overflow-wrap: anywhere;
+            }
+        }
