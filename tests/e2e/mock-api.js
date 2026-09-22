@@ -271,11 +271,24 @@ export async function installMockApi(page, seed = {}) {
       const sales = state.orders.filter((order) => order.date === date && ['unsettled', 'settled'].includes(order.status));
       const purchases = state.purchases.filter((purchase) => purchase.date === date);
       const month = date.slice(0, 7);
+      const year = date.slice(0, 4);
+      const currentMonth = Number(date.slice(5, 7));
+      const yearTrend = Array.from({ length: currentMonth }, (_, index) => {
+        const trendMonth = `${year}-${String(index + 1).padStart(2, '0')}`;
+        const trendSales = state.orders
+          .filter((order) => order.date.startsWith(trendMonth) && ['unsettled', 'settled'].includes(order.status))
+          .reduce((sum, order) => sum + Number(order.amount || 0), 0);
+        const trendPurchases = state.purchases
+          .filter((purchase) => purchase.date.startsWith(trendMonth))
+          .reduce((sum, purchase) => sum + Number(purchase.amount || 0), 0);
+        return { month: trendMonth, sales: trendSales, purchases: trendPurchases };
+      });
       return ok(route, {
         todaySales: sales.reduce((sum, order) => sum + order.amount, 0),
         todayDealCount: sales.length,
         todayPurchase: purchases.reduce((sum, purchase) => sum + purchase.amount, 0),
-        monthSales: state.orders.filter((order) => order.date.startsWith(month) && ['unsettled', 'settled'].includes(order.status)).reduce((sum, order) => sum + order.amount, 0)
+        monthSales: state.orders.filter((order) => order.date.startsWith(month) && ['unsettled', 'settled'].includes(order.status)).reduce((sum, order) => sum + order.amount, 0),
+        yearTrend
       });
     }
 
