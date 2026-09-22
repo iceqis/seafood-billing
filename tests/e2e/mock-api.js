@@ -281,7 +281,11 @@ export async function installMockApi(page, seed = {}) {
         const trendPurchases = state.purchases
           .filter((purchase) => purchase.date.startsWith(trendMonth))
           .reduce((sum, purchase) => sum + Number(purchase.amount || 0), 0);
-        return { month: trendMonth, sales: trendSales, purchases: trendPurchases };
+        return {
+          month: trendMonth,
+          sales: Number(trendSales.toFixed(2)),
+          purchases: Number(trendPurchases.toFixed(2))
+        };
       });
       return ok(route, {
         todaySales: sales.reduce((sum, order) => sum + order.amount, 0),
