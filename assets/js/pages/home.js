@@ -5,13 +5,14 @@ export function createHomePage(deps) {
   const page = createPageFactory(deps);
   async function enter() {
     const trendContainer = page.byId('home-year-trend');
+    const requestDate = page.today();
     renderTrendStatus(trendContainer, '正在读取真实数据…', 'chart-status');
-    const stats = await page.api.get(`/api/stats/home?date=${page.today()}`) || {};
+    const stats = await page.api.get(`/api/stats/home?date=${requestDate}`) || {};
     page.setText(page.byId('home-today-sales'), page.money(stats.todaySales));
     page.setText(page.byId('home-deal-count'), stats.todayDealCount || 0);
     page.setText(page.byId('home-today-purchase'), page.money(stats.todayPurchase));
     page.setText(page.byId('home-month-sales'), page.money(stats.monthSales));
-    renderYearTrend(trendContainer, stats.yearTrend);
+    renderYearTrend(trendContainer, stats.yearTrend, requestDate);
   }
   async function detail(type) {
     const data = await page.api.get(`/api/details/${type}?date=${page.today()}`) || {}; const config = getHomeDetailConfig(type); page.setText(page.byId('stat-detail-summary'), config.summary(data)); page.setText(page.byId('stat-detail-title'), config.title); page.setText(page.byId('stat-detail-icon'), config.icon);
@@ -37,14 +38,24 @@ export function getHomeDetailConfig(type) {
 function pageMoney(value) { return `¥${(Number.isFinite(Number(value)) ? Number(value) : 0).toFixed(2)}`; }
 
 function trendAmount(value) {
-  const amount = Number(value);
-  return Number.isFinite(amount) && amount > 0 ? amount : 0;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
-function trendMonth(month) {
-  const match = String(month ?? '').match(/^\d{4}-(\d{2})$/);
-  const number = Number(match?.[1]);
-  return number >= 1 && number <= 12 ? number : null;
+function trendPeriod(requestDate) {
+  if (typeof requestDate !== 'string') return null;
+  const match = requestDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const month = Number(match?.[2]);
+  const day = Number(match?.[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const date = new Date(`${requestDate}T00:00:00.000Z`);
+  return date.toISOString().slice(0, 10) === requestDate ? { year: match[1], month } : null;
+}
+
+function trendMonth(month, period) {
+  if (typeof month !== 'string' || !period) return null;
+  const match = month.match(/^(\d{4})-(\d{2})$/);
+  const number = Number(match?.[2]);
+  return match?.[1] === period.year && number >= 1 && number <= period.month ? number : null;
 }
 
 function renderTrendStatus(container, text, className = 'chart-empty') {
@@ -55,12 +66,13 @@ function renderTrendStatus(container, text, className = 'chart-empty') {
   container.append(status);
 }
 
-export function renderYearTrend(container, trend) {
+export function renderYearTrend(container, trend, requestDate) {
   if (!container) return;
   while (container.firstChild) container.removeChild(container.firstChild);
 
-  const rows = Array.isArray(trend) ? trend.map((item) => ({
-    month: trendMonth(item?.month),
+  const period = trendPeriod(requestDate);
+  const rows = period && Array.isArray(trend) ? trend.map((item) => ({
+    month: trendMonth(item?.month, period),
     sales: trendAmount(item?.sales),
     purchases: trendAmount(item?.purchases)
   })).filter((item) => item.month !== null) : [];

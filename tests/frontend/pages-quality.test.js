@@ -39,8 +39,10 @@ describe('page quality boundaries', () => {
       { month: '2026-01', sales: 200, purchases: 100 },
       { month: '2026-02', sales: 0, purchases: 50 },
       { month: null, sales: 500, purchases: 500 },
-      { month: '2026-13', sales: 500, purchases: 500 }
-    ]);
+      { month: '2026-13', sales: 500, purchases: 500 },
+      { month: '2025-01', sales: 500, purchases: 500 },
+      { month: '2026-03', sales: 500, purchases: 500 }
+    ], '2026-02-08');
 
     expect(container.textContent).toContain('1月');
     expect(container.textContent).toContain('销售 ¥200.00');
@@ -59,19 +61,36 @@ describe('page quality boundaries', () => {
 
   it('renders an empty year trend for missing or unusable data', () => {
     const container = document.createElement('div');
-    [undefined, [], [{ month: '2026-01', sales: 0, purchases: 0 }], [{ month: '2026-01', sales: -1, purchases: Number.NaN }], [{ month: null, sales: 10, purchases: 20 }], [{ month: '2026-13', sales: 10, purchases: 20 }]].forEach((trend) => {
-      renderYearTrend(container, trend);
+    [
+      { trend: undefined },
+      { trend: [] },
+      { trend: [{ month: '2026-01', sales: 0, purchases: 0 }] },
+      { trend: [{ month: '2026-01', sales: -1, purchases: Number.NaN }] },
+      { trend: [{ month: null, sales: 10, purchases: 20 }] },
+      { trend: [{ month: '2026-13', sales: 10, purchases: 20 }] },
+      { trend: [{ month: '2025-01', sales: 10, purchases: 20 }] },
+      { trend: [{ month: '2026-03', sales: 10, purchases: 20 }] },
+      { trend: [{ month: '2026-01', sales: true, purchases: false }] },
+      { trend: [{ month: '2026-01', sales: 0, purchases: '50' }] },
+      { trend: [{ month: '2026-01', sales: 10, purchases: 20 }], requestDate: null },
+      { trend: [{ month: '2026-01', sales: 10, purchases: 20 }], requestDate: '2026-02' },
+      { trend: [{ month: '2026-01', sales: 10, purchases: 20 }], requestDate: '2026-02-31' }
+    ].forEach(({ trend, requestDate = '2026-02-08' }) => {
+      renderYearTrend(container, trend, requestDate);
       expect(container.textContent).toBe('暂无经营数据');
       expect(container.querySelector('.chart-empty').getAttribute('role')).toBe('status');
       expect(container.querySelectorAll('.chart-row')).toHaveLength(0);
     });
+    renderYearTrend(container, [{ month: '2026-01', sales: 10, purchases: 20 }]);
+    expect(container.textContent).toBe('暂无经营数据');
   });
 
   it('loads and renders the home year trend from the single stats request', async () => {
     document.body.innerHTML = '<section id="page-home"><div class="stat-card"></div><div class="stat-card"></div><div class="stat-card"></div><div class="stat-card"></div><div class="quick-card"></div><div id="home-today-sales"></div><div id="home-deal-count"></div><div id="home-today-purchase"></div><div id="home-month-sales"></div><div id="home-year-trend">旧趋势</div></section><section id="page-stat-detail"><button class="back-btn"></button><div id="stat-detail-summary"></div><div id="stat-detail-title"></div><div id="stat-detail-icon"></div><div id="stat-detail-list"></div></section><div id="loading-overlay"></div><div id="loading-text"></div>';
     let resolveStats;
     const get = vi.fn(() => new Promise((resolve) => { resolveStats = resolve; }));
-    const page = createHomePage({ api: { get }, today: () => '2026-09-08', navigate: vi.fn() });
+    const today = vi.fn(() => '2026-09-08');
+    const page = createHomePage({ api: { get }, today, navigate: vi.fn() });
 
     const entered = page.enter();
     await vi.waitFor(() => expect(get).toHaveBeenCalledWith('/api/stats/home?date=2026-09-08'));
@@ -81,6 +100,7 @@ describe('page quality boundaries', () => {
     await entered;
 
     expect(get).toHaveBeenCalledTimes(1);
+    expect(today).toHaveBeenCalledOnce();
     expect(document.getElementById('home-today-sales').textContent).toBe('¥100.00');
     expect(document.getElementById('home-year-trend').textContent).toContain('9月');
   });
