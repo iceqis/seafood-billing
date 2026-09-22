@@ -74,7 +74,10 @@ describe('page quality boundaries', () => {
       { trend: [{ month: '2026-01', sales: 0, purchases: '50' }] },
       { trend: [{ month: '2026-01', sales: 10, purchases: 20 }], requestDate: null },
       { trend: [{ month: '2026-01', sales: 10, purchases: 20 }], requestDate: '2026-02' },
-      { trend: [{ month: '2026-01', sales: 10, purchases: 20 }], requestDate: '2026-02-31' }
+      { trend: [{ month: '2026-01', sales: 10, purchases: 20 }], requestDate: '2026-02-31' },
+      { trend: [{ month: '2026-01', sales: 10, purchases: 20 }], requestDate: '' },
+      { trend: [{ month: '2026-01', sales: 10, purchases: 20 }], requestDate: 'invalid' },
+      { trend: [{ month: '2026-01', sales: 10, purchases: 20 }], requestDate: '2026/02/08' }
     ].forEach(({ trend, requestDate = '2026-02-08' }) => {
       renderYearTrend(container, trend, requestDate);
       expect(container.textContent).toBe('暂无经营数据');
